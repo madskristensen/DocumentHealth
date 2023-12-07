@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json.schemastore.org/vsix-publish",
+  "categories": [ "other", "coding" ],
+  "private": false,
+  "identity": {
+    "internalName": "DocumentHealth",
+    "tags": [ "errors", "warnings", "health" ]
+  },
+  "assetFiles": [
+
+  ],
+  "overview": "README.md",
+  "publisher": "MadsKristensen",
+  "repo": "https://github.com/MadsKristensen/DocumentHealth"
+}
