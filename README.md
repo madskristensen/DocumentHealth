@@ -11,7 +11,7 @@ or get the [CI build][vsixgallery].
 
 ----------------------------------------
 
-Coming soon...
+Shows an icon above the vertical scroll bar indicating if the document has any errors or warnings.
 
 ## How can I help?
 If you enjoy using the extension, please give it a ★★★★★ rating on the [Visual Studio Marketplace][marketplace].
