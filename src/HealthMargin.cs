@@ -21,6 +21,13 @@ namespace DocumentHealth
         private bool _isDisposed;
         private int _currentErrors = -1;
         private int _currentWarnings = -1;
+        private readonly CrispImage _image = new()
+        {
+            Width = 12,
+            Height = 12,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
 
         public HealthMargin(IWpfTextView textView, IErrorList errorList)
         {
@@ -31,18 +38,10 @@ namespace DocumentHealth
             MouseUp += OnMouseUp;
             SetResourceReference(BackgroundProperty, EnvironmentColors.ScrollBarBackgroundBrushKey);
             Height = 16;
+            Children.Add(_image);
 
-            _ = ThreadHelper.JoinableTaskFactory.StartOnIdle(async () =>
-            {
-                try
-                {
-                    await UpdateAsync();
-                }
-                finally
-                {
-                    _table.EntriesChanged += OnEntriesChanged;
-                }
-            }, VsTaskRunContext.UIThreadBackgroundPriority);
+            UpdateAsync().FireAndForget();
+            _table.EntriesChanged += OnEntriesChanged;
         }
 
         private void OnMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -77,18 +76,16 @@ namespace DocumentHealth
             // Move back to the UI thread
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-            var image = new CrispImage
+            _image.Moniker = GetMoniker();
+         
+            if (_currentErrors == 0 && _currentWarnings == 0)
             {
-                Moniker = GetMoniker(),
-                Width = 12,
-                Height = 12,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                ToolTip = $"This file contains {_currentErrors} errors and {_currentWarnings} warnings.\r\n\r\nClick to go to the next instance (Ctrl+Shift+F12)"
-            };
-
-            Children.Clear();
-            Children.Add(image);
+                _image.ToolTip = "This file has no errors and warnings";
+            }
+            else
+            {
+                _image.ToolTip = $"This file contains {_currentErrors} errors and {_currentWarnings} warnings.\r\n\r\nClick to go to the next instance (Ctrl+Shift+F12)";
+            }
         }
 
         private ImageMoniker GetMoniker()
