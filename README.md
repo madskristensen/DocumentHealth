@@ -13,6 +13,12 @@ or get the [CI build][vsixgallery].
 
 Shows an icon above the vertical scroll bar indicating if the document has any errors or warnings.
 
+![error](art/error.png)
+
+When there are no errors or warnings, the icon is green.
+
+![No errors](art/green.png)
+
 ## How can I help?
 If you enjoy using the extension, please give it a ★★★★★ rating on the [Visual Studio Marketplace][marketplace].
 

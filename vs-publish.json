@@ -7,7 +7,14 @@
     "tags": [ "errors", "warnings", "health" ]
   },
   "assetFiles": [
-
+    {
+      "pathOnDisk": "art/error.png",
+      "targetPath": "art/error.png"
+    },
+    {
+      "pathOnDisk": "art/green.png",
+      "targetPath": "art/green.png"
+    }
   ],
   "overview": "README.md",
   "publisher": "MadsKristensen",
