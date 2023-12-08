@@ -14,6 +14,10 @@
     {
       "pathOnDisk": "art/green.png",
       "targetPath": "art/green.png"
+    },
+    {
+      "pathOnDisk": "art/indicator.png",
+      "targetPath": "art/indicator.png"
     }
   ],
   "overview": "README.md",
