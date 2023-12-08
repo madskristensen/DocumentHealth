@@ -11,11 +11,11 @@ or get the [CI build][vsixgallery].
 
 ----------------------------------------
 
-Shows an icon above the vertical scroll bar indicating if the document has any errors or warnings.
+Shows an icon above the vertical scroll bar indicating if the document has any errors or warnings. Use the existing keyboard shortcuts **Ctrl+Shift+F12** or **Alt+PgDn/PgUp** to navigate between errors and warnings in the open document.
 
 ![error](art/error.png)
 
-When there are no errors or warnings, the icon is green.
+When there are no errors or warnings, the icon is green and you can relax knowing that your code is in good shape.
 
 ![No errors](art/green.png)
 
