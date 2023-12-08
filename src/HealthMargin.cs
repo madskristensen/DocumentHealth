@@ -30,6 +30,7 @@ namespace DocumentHealth
 
             MouseUp += OnMouseUp;
             SetResourceReference(BackgroundProperty, EnvironmentColors.ScrollBarBackgroundBrushKey);
+            Height = 16;
 
             _ = ThreadHelper.JoinableTaskFactory.StartOnIdle(async () =>
             {
@@ -51,15 +52,63 @@ namespace DocumentHealth
 
         private void OnEntriesChanged(object sender, EntriesChangedEventArgs e)
         {
-            UpdateAsync().FireAndForget();
+            if (_view.HasAggregateFocus)
+            {
+                UpdateAsync().FireAndForget();
+            }
         }
 
         public async Task UpdateAsync()
         {
-            // Move to the background thread
+            // Move to the background thread if not already on it
             await TaskScheduler.Default;
 
-            int errors = 0, warnings = 0;
+            GetErrorsAndWarnings(out var errors, out var warnings);
+
+            // If the values haven't changed, don't update the UI
+            if (_currentErrors == errors && _currentWarnings == warnings)
+            {
+                return;
+            }
+
+            _currentErrors = errors;
+            _currentWarnings = warnings;
+
+            // Move back to the UI thread
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            var image = new CrispImage
+            {
+                Moniker = GetMoniker(),
+                Width = 12,
+                Height = 12,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = $"This file contains {_currentErrors} errors and {_currentWarnings} warnings.\r\n\r\nClick to go to the next instance (Ctrl+Shift+F12)"
+            };
+
+            Children.Clear();
+            Children.Add(image);
+        }
+
+        private ImageMoniker GetMoniker()
+        {
+            if (_currentErrors > 0)
+            {
+                return KnownMonikers.StatusError;
+            }
+            else if (_currentWarnings > 0)
+            {
+                return KnownMonikers.StatusWarning;
+            }
+
+            return KnownMonikers.StatusOK;
+        }
+
+        private void GetErrorsAndWarnings(out int errors, out int warnings)
+        {
+            errors = 0;
+            warnings = 0;
 
             foreach (ITableEntryHandle entry in _table.Entries)
             {
@@ -76,40 +125,6 @@ namespace DocumentHealth
                 errors += severity == __VSERRORCATEGORY.EC_ERROR ? 1 : 0;
                 warnings += severity == __VSERRORCATEGORY.EC_WARNING ? 1 : 0;
             }
-
-            // If the values haven't changed, don't update the UI
-            if (_currentErrors == errors && _currentWarnings == warnings)
-            {
-                return;
-            }
-
-            ImageMoniker moniker = KnownMonikers.StatusOK;
-            if (errors > 0)
-            {
-                moniker = KnownMonikers.StatusError;
-            }
-            else if (warnings > 0)
-            {
-                moniker = KnownMonikers.StatusWarning;
-            }
-
-            _currentErrors = errors;
-            _currentWarnings = warnings;
-
-            // Move back to the UI thread
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-
-            var image = new CrispImage
-            {
-                Moniker = moniker,
-                Width = 14,
-                Height = 14,
-                Margin = new Thickness(2),
-                ToolTip = $"This file contains {_currentErrors} errors and {_currentWarnings} warnings.\r\n\r\nClick to go to the next instance (Ctrl+Shift+F12)"
-            };
-
-            Children.Clear();
-            Children.Add(image);
         }
 
         public FrameworkElement VisualElement => this;
