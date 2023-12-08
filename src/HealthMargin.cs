@@ -19,6 +19,8 @@ namespace DocumentHealth
         private readonly IWpfTableControl _table;
         private readonly IWpfTextView _view;
         private bool _isDisposed;
+        private int _currentErrors = -1;
+        private int _currentWarnings = -1;
 
         public HealthMargin(IWpfTextView textView, IErrorList errorList)
         {
@@ -26,9 +28,20 @@ namespace DocumentHealth
             _table = errorList.TableControl;
             _view = textView;
 
-            _table.EntriesChanged += OnEntriesChanged;
             MouseUp += OnMouseUp;
             SetResourceReference(BackgroundProperty, EnvironmentColors.ScrollBarBackgroundBrushKey);
+
+            _ = ThreadHelper.JoinableTaskFactory.StartOnIdle(async () =>
+            {
+                try
+                {
+                    await UpdateAsync();
+                }
+                finally
+                {
+                    _table.EntriesChanged += OnEntriesChanged;
+                }
+            }, VsTaskRunContext.UIThreadBackgroundPriority);
         }
 
         private void OnMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -46,8 +59,7 @@ namespace DocumentHealth
             // Move to the background thread
             await TaskScheduler.Default;
 
-            var errors = 0;
-            var warnings = 0;
+            int errors = 0, warnings = 0;
 
             foreach (ITableEntryHandle entry in _table.Entries)
             {
@@ -65,6 +77,12 @@ namespace DocumentHealth
                 warnings += severity == __VSERRORCATEGORY.EC_WARNING ? 1 : 0;
             }
 
+            // If the values haven't changed, don't update the UI
+            if (_currentErrors == errors && _currentWarnings == warnings)
+            {
+                return;
+            }
+
             ImageMoniker moniker = KnownMonikers.StatusOK;
             if (errors > 0)
             {
@@ -75,16 +93,19 @@ namespace DocumentHealth
                 moniker = KnownMonikers.StatusWarning;
             }
 
+            _currentErrors = errors;
+            _currentWarnings = warnings;
+
             // Move back to the UI thread
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
             var image = new CrispImage
             {
                 Moniker = moniker,
-                Width = 16,
-                Height = 16,
+                Width = 14,
+                Height = 14,
                 Margin = new Thickness(2),
-                ToolTip = $"This file contains {errors} errors and {warnings} warnings.\r\nClick to go to the next instance (Ctrl+Shift+F12)"
+                ToolTip = $"This file contains {_currentErrors} errors and {_currentWarnings} warnings.\r\n\r\nClick to go to the next instance (Ctrl+Shift+F12)"
             };
 
             Children.Clear();

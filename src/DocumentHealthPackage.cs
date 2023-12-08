@@ -1,13 +1,8 @@
-﻿global using Community.VisualStudio.Toolkit;
-
+﻿global using System;
+global using Community.VisualStudio.Toolkit;
 global using Microsoft.VisualStudio.Shell;
-
-global using System;
-
 global using Task = System.Threading.Tasks.Task;
-
 using System.Runtime.InteropServices;
-using System.Threading;
 
 namespace DocumentHealth
 {
@@ -17,9 +12,9 @@ namespace DocumentHealth
     [Guid(PackageGuids.DocumentHealthString)]
     public sealed class DocumentHealthPackage : ToolkitPackage
     {
-        protected override async Task InitializeAsync(CancellationToken cancellationToken, IProgress<ServiceProgressData> progress)
-        {
-            await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
-        }
+        //protected override async Task InitializeAsync(CancellationToken cancellationToken, IProgress<ServiceProgressData> progress)
+        //{
+        //    await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
+        //}
     }
 }

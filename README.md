@@ -19,6 +19,12 @@ When there are no errors or warnings, the icon is green and you can relax knowin
 
 ![No errors](art/green.png)
 
+The icon replaces the current Document Health Indicator at the bottom left of the editor.
+
+![Indicator](art/indicator.png)
+
+By not having the Document Health Indicator at the bottom left, we free up space for the horizontal scrollbar and reduce noise.
+
 ## How can I help?
 If you enjoy using the extension, please give it a ★★★★★ rating on the [Visual Studio Marketplace][marketplace].
 
