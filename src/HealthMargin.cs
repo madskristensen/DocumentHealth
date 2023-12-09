@@ -25,6 +25,7 @@ namespace DocumentHealth
         {
             Width = 12,
             Height = 12,
+            Margin = new Thickness(0, 3, 0, 0),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
