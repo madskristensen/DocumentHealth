@@ -1,6 +1,7 @@
 ﻿using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using Microsoft.VisualStudio.Imaging;
 using Microsoft.VisualStudio.Imaging.Interop;
 using Microsoft.VisualStudio.PlatformUI;
@@ -21,6 +22,8 @@ namespace DocumentHealth
         private bool _isDisposed;
         private int _currentErrors = -1;
         private int _currentWarnings = -1;
+        private int _currentMessages = -1;
+        private int _currentTableVersion;
         private readonly CrispImage _image = new()
         {
             Width = 12,
@@ -35,6 +38,7 @@ namespace DocumentHealth
             _fileName = textView.TextBuffer.GetFileName();
             _table = errorList.TableControl;
             _view = textView;
+            _view.GotAggregateFocus += OnFocus;
 
             MouseUp += OnMouseUp;
             SetResourceReference(BackgroundProperty, EnvironmentColors.ScrollBarBackgroundBrushKey);
@@ -43,6 +47,19 @@ namespace DocumentHealth
 
             UpdateAsync().FireAndForget();
             _table.EntriesChanged += OnEntriesChanged;
+
+            ToolTip = ""; // instantiate the tooltip
+            ToolTipOpening += OnTooltipOpening;
+        }
+
+        private void OnFocus(object sender, EventArgs e)
+        {
+            UpdateAsync().FireAndForget();
+        }
+
+        private void OnTooltipOpening(object sender, ToolTipEventArgs e)
+        {
+            ToolTip = GetTooltip();
         }
 
         private void OnMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -52,8 +69,9 @@ namespace DocumentHealth
 
         private void OnEntriesChanged(object sender, EntriesChangedEventArgs e)
         {
-            if (_view.HasAggregateFocus)
+            if (e.VersionNumber > _currentTableVersion && _view.HasAggregateFocus)
             {
+                _currentTableVersion = e.VersionNumber;
                 UpdateAsync().FireAndForget();
             }
         }
@@ -63,30 +81,22 @@ namespace DocumentHealth
             // Move to the background thread if not already on it
             await TaskScheduler.Default;
 
-            GetErrorsAndWarnings(out var errors, out var warnings);
+            GetErrorsAndWarnings(out var errors, out var warnings, out var messages);
 
             // If the values haven't changed, don't update the UI
-            if (_currentErrors == errors && _currentWarnings == warnings)
+            if (_currentErrors == errors && _currentWarnings == warnings && _currentMessages == messages)
             {
                 return;
             }
 
             _currentErrors = errors;
             _currentWarnings = warnings;
+            _currentMessages = messages;
 
             // Move back to the UI thread
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
             _image.Moniker = GetMoniker();
-         
-            if (_currentErrors == 0 && _currentWarnings == 0)
-            {
-                _image.ToolTip = "This file has no errors and warnings";
-            }
-            else
-            {
-                _image.ToolTip = $"This file contains {_currentErrors} errors and {_currentWarnings} warnings.\r\n\r\nClick to go to the next instance (Ctrl+Shift+F12)";
-            }
         }
 
         private ImageMoniker GetMoniker()
@@ -103,10 +113,70 @@ namespace DocumentHealth
             return KnownMonikers.StatusOK;
         }
 
-        private void GetErrorsAndWarnings(out int errors, out int warnings)
+        private UIElement GetTooltip()
         {
-            errors = 0;
-            warnings = 0;
+            var tooltip = new ToolTip
+            {
+                Background = FindResource(EnvironmentColors.ScrollBarBackgroundBrushKey) as Brush,
+                Padding = new Thickness(0),
+                Placement = System.Windows.Controls.Primitives.PlacementMode.Left,
+            };
+
+            var lineOne = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(5, 0, 0, 0),
+            };
+
+            lineOne.Children.Add(new CrispImage
+            {
+                Moniker = KnownMonikers.StatusError,
+                Width = 14,
+                Height = 14,
+            });
+
+            lineOne.Children.Add(new Label
+            {
+                Content = _currentErrors,
+                Foreground = FindResource(EnvironmentColors.CommandBarTextHoverBrushKey) as Brush
+            });
+
+            lineOne.Children.Add(new CrispImage
+            {
+                Moniker = KnownMonikers.StatusWarning,
+                Width = 14,
+                Height = 14,
+                Margin = new Thickness(10, 0, 0, 0),
+            });
+
+            lineOne.Children.Add(new Label
+            {
+                Content = _currentWarnings,
+                Foreground = FindResource(EnvironmentColors.CommandBarTextHoverBrushKey) as Brush
+            });
+
+            lineOne.Children.Add(new CrispImage
+            {
+                Moniker = KnownMonikers.StatusInformation,
+                Width = 14,
+                Height = 14,
+                Margin = new Thickness(10, 0, 0, 0),
+            });
+
+            lineOne.Children.Add(new Label
+            {
+                Content = _currentMessages,
+                Foreground = FindResource(EnvironmentColors.CommandBarTextHoverBrushKey) as Brush
+            });
+
+            tooltip.Content = lineOne;
+
+            return tooltip;
+        }
+
+        private void GetErrorsAndWarnings(out int errors, out int warnings, out int messages)
+        {
+            errors = warnings = messages = 0;
 
             foreach (ITableEntryHandle entry in _table.Entries)
             {
@@ -122,6 +192,7 @@ namespace DocumentHealth
 
                 errors += severity == __VSERRORCATEGORY.EC_ERROR ? 1 : 0;
                 warnings += severity == __VSERRORCATEGORY.EC_WARNING ? 1 : 0;
+                messages += severity == __VSERRORCATEGORY.EC_MESSAGE ? 1 : 0;
             }
         }
 
@@ -144,7 +215,9 @@ namespace DocumentHealth
                 GC.SuppressFinalize(this);
 
                 _table.EntriesChanged -= OnEntriesChanged;
+                _view.GotAggregateFocus -= OnFocus;
                 MouseUp -= OnMouseUp;
+                ToolTipOpening -= OnTooltipOpening;
             }
         }
     }

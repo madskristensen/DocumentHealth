@@ -8,8 +8,8 @@
   },
   "assetFiles": [
     {
-      "pathOnDisk": "art/error.png",
-      "targetPath": "art/error.png"
+      "pathOnDisk": "art/tooltip.gif",
+      "targetPath": "art/tooltip.gif"
     },
     {
       "pathOnDisk": "art/green.png",
