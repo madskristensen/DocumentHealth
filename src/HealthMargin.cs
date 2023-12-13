@@ -36,9 +36,13 @@ namespace DocumentHealth
         public HealthMargin(IWpfTextView textView, IErrorList errorList)
         {
             _fileName = textView.TextBuffer.GetFileName();
+
             _table = errorList.TableControl;
+            _table.EntriesChanged += OnEntriesChanged;
+
             _view = textView;
             _view.GotAggregateFocus += OnFocus;
+            _view.LostAggregateFocus += OnFocusLost;
 
             MouseUp += OnMouseUp;
             SetResourceReference(BackgroundProperty, EnvironmentColors.ScrollBarBackgroundBrushKey);
@@ -46,20 +50,18 @@ namespace DocumentHealth
             Children.Add(_image);
 
             UpdateAsync().FireAndForget();
-            _table.EntriesChanged += OnEntriesChanged;
 
             ToolTip = ""; // instantiate the tooltip
-            ToolTipOpening += OnTooltipOpening;
+        }
+
+        private void OnFocusLost(object sender, EventArgs e)
+        {
+            _table.EntriesChanged -= OnEntriesChanged;
         }
 
         private void OnFocus(object sender, EventArgs e)
         {
-            UpdateAsync().FireAndForget();
-        }
-
-        private void OnTooltipOpening(object sender, ToolTipEventArgs e)
-        {
-            ToolTip = GetTooltip();
+            _table.EntriesChanged += OnEntriesChanged;
         }
 
         private void OnMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -113,7 +115,7 @@ namespace DocumentHealth
             return KnownMonikers.StatusOK;
         }
 
-        private UIElement GetTooltip()
+        protected override void OnToolTipOpening(ToolTipEventArgs e)
         {
             var tooltip = new ToolTip
             {
@@ -171,7 +173,7 @@ namespace DocumentHealth
 
             tooltip.Content = lineOne;
 
-            return tooltip;
+            ToolTip = tooltip;
         }
 
         private void GetErrorsAndWarnings(out int errors, out int warnings, out int messages)
@@ -216,8 +218,8 @@ namespace DocumentHealth
 
                 _table.EntriesChanged -= OnEntriesChanged;
                 _view.GotAggregateFocus -= OnFocus;
+                _view.LostAggregateFocus -= OnFocusLost;
                 MouseUp -= OnMouseUp;
-                ToolTipOpening -= OnTooltipOpening;
             }
         }
     }
