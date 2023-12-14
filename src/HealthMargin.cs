@@ -24,6 +24,7 @@ namespace DocumentHealth
         private int _currentWarnings = -1;
         private int _currentMessages = -1;
         private int _currentTableVersion;
+        private ImageMoniker _moniker;
         private readonly CrispImage _image = new()
         {
             Width = 12,
@@ -95,10 +96,14 @@ namespace DocumentHealth
             _currentWarnings = warnings;
             _currentMessages = messages;
 
-            // Move back to the UI thread
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            ImageMoniker moniker = GetMoniker();
 
-            _image.Moniker = GetMoniker();
+            if (moniker.Id != _moniker.Id)
+            {
+                // Move back to the UI thread to interact with the UI
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                _image.Moniker = _moniker = moniker;
+            }
         }
 
         private ImageMoniker GetMoniker()
