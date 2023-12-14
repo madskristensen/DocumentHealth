@@ -48,6 +48,7 @@
   <ItemGroup>
     <Compile Include="HealthMargin.cs" />
     <Compile Include="HealthMarginProvider.cs" />
+    <Compile Include="Options\General.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="DocumentHealthPackage.cs" />
     <Compile Include="source.extension.cs">

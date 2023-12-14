@@ -16,6 +16,7 @@ namespace DocumentHealth
 {
     internal class HealthMargin : DockPanel, IWpfTextViewMargin
     {
+        private static readonly RatingPrompt _rating = new("MadsKristensen.DocumentHealth", Vsix.Name, General.Instance, 3);
         private readonly string _fileName;
         private readonly IWpfTableControl _table;
         private readonly IWpfTextView _view;
@@ -179,6 +180,12 @@ namespace DocumentHealth
             tooltip.Content = lineOne;
 
             ToolTip = tooltip;
+
+            _ = ThreadHelper.JoinableTaskFactory.StartOnIdle(async () =>
+            {
+                await Task.Delay(5000);
+                _rating.RegisterSuccessfulUsage();
+            }, VsTaskRunContext.UIThreadIdlePriority);
         }
 
         private void GetErrorsAndWarnings(out int errors, out int warnings, out int messages)
