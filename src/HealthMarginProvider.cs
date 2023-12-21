@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel.Composition;
-using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Text.Editor;
+using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Utilities;
 
 namespace DocumentHealth
@@ -13,13 +13,17 @@ namespace DocumentHealth
     [TextViewRole(PredefinedTextViewRoles.PrimaryDocument)]
     internal class HealthMarginProvider : IWpfTextViewMarginProvider
     {
+        [Import]
+        internal IViewTagAggregatorFactoryService ViewTagAggregatorFactoryService = null;
+
         public IWpfTextViewMargin CreateMargin(IWpfTextViewHost wpfTextViewHost, IWpfTextViewMargin marginContainer)
         {
             // Disable File Health Indicator from showing up in the bottom left editor margin
             wpfTextViewHost.TextView.Options.SetOptionValue(DefaultTextViewHostOptions.EnableFileHealthIndicatorOptionId, false);
 
-            IErrorList errorList = VS.GetRequiredService<SVsErrorList, IErrorList>();
-            return new HealthMargin(wpfTextViewHost.TextView, errorList);
+            ITagAggregator<IErrorTag> aggregator = ViewTagAggregatorFactoryService.CreateTagAggregator<IErrorTag>(wpfTextViewHost.TextView, (TagAggregatorOptions)TagAggregatorOptions2.DeferTaggerCreation);
+
+            return new HealthMargin(wpfTextViewHost.TextView, aggregator);
         }
     }
 }

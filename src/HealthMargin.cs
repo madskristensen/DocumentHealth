@@ -1,31 +1,27 @@
-﻿using System.Threading.Tasks;
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.VisualStudio.Imaging;
 using Microsoft.VisualStudio.Imaging.Interop;
 using Microsoft.VisualStudio.PlatformUI;
-using Microsoft.VisualStudio.Shell.Interop;
-using Microsoft.VisualStudio.Shell.TableControl;
-using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text;
+using Microsoft.VisualStudio.Text.Adornments;
 using Microsoft.VisualStudio.Text.Editor;
-using Microsoft.VisualStudio.Threading;
+using Microsoft.VisualStudio.Text.Tagging;
 
 namespace DocumentHealth
 {
     internal class HealthMargin : DockPanel, IWpfTextViewMargin
     {
         private static readonly RatingPrompt _rating = new("MadsKristensen.DocumentHealth", Vsix.Name, General.Instance, 3);
-        private readonly string _fileName;
-        private readonly IWpfTableControl _table;
         private readonly IWpfTextView _view;
+        private readonly ITagAggregator<IErrorTag> _aggregator;
         private bool _isDisposed;
         private int _currentErrors = -1;
         private int _currentWarnings = -1;
         private int _currentMessages = -1;
-        private int _currentTableVersion;
         private ImageMoniker _moniker;
+        private bool _updateQueued;
         private readonly CrispImage _image = new()
         {
             Width = 12,
@@ -35,35 +31,26 @@ namespace DocumentHealth
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        public HealthMargin(IWpfTextView textView, IErrorList errorList)
+        public HealthMargin(IWpfTextView textView, ITagAggregator<IErrorTag> aggregator)
         {
-            _fileName = textView.TextBuffer.GetFileName();
-
-            _table = errorList.TableControl;
-            _table.EntriesChanged += OnEntriesChanged;
-
             _view = textView;
-            _view.GotAggregateFocus += OnFocus;
-            _view.LostAggregateFocus += OnFocusLost;
+            _aggregator = aggregator;
+            _aggregator.BatchedTagsChanged += OnBatchedTagsChanged;
 
             MouseUp += OnMouseUp;
             SetResourceReference(BackgroundProperty, EnvironmentColors.ScrollBarBackgroundBrushKey);
             Height = 16;
-            Children.Add(_image);
-
-            UpdateAsync().FireAndForget();
-
             ToolTip = ""; // instantiate the tooltip
+            Children.Add(_image);
         }
 
-        private void OnFocusLost(object sender, EventArgs e)
+        private void OnBatchedTagsChanged(object sender, BatchedTagsChangedEventArgs e)
         {
-            _table.EntriesChanged -= OnEntriesChanged;
-        }
-
-        private void OnFocus(object sender, EventArgs e)
-        {
-            _table.EntriesChanged += OnEntriesChanged;
+            if (!_updateQueued)
+            {
+                _updateQueued = true;
+                _ = ThreadHelper.JoinableTaskFactory.StartOnIdle(UpdateAsync, VsTaskRunContext.UIThreadIdlePriority);
+            }
         }
 
         private void OnMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -71,19 +58,12 @@ namespace DocumentHealth
             VS.Commands.ExecuteAsync("View.NextError").FireAndForget();
         }
 
-        private void OnEntriesChanged(object sender, EntriesChangedEventArgs e)
-        {
-            if (e.VersionNumber > _currentTableVersion && _view.HasAggregateFocus)
-            {
-                _currentTableVersion = e.VersionNumber;
-                UpdateAsync().FireAndForget();
-            }
-        }
-
         public async Task UpdateAsync()
         {
-            // Move to the background thread if not already on it
-            await TaskScheduler.Default;
+            // Ensure to execute on the UI thread
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            _updateQueued = false;
 
             GetErrorsAndWarnings(out var errors, out var warnings, out var messages);
 
@@ -101,8 +81,6 @@ namespace DocumentHealth
 
             if (moniker.Id != _moniker.Id)
             {
-                // Move back to the UI thread to interact with the UI
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 _image.Moniker = _moniker = moniker;
             }
         }
@@ -192,21 +170,23 @@ namespace DocumentHealth
         {
             errors = warnings = messages = 0;
 
-            foreach (ITableEntryHandle entry in _table.Entries)
+            foreach (IMappingTagSpan<IErrorTag> tag in _aggregator.GetTags(new SnapshotSpan(_view.TextSnapshot, 0, _view.TextSnapshot.Length)))
             {
-                if (!entry.TryGetValue(StandardTableKeyNames.DocumentName, out string fileName) || fileName != _fileName)
+                switch (tag.Tag.ErrorType)
                 {
-                    continue;
+                    case PredefinedErrorTypeNames.CompilerError:
+                    case PredefinedErrorTypeNames.OtherError:
+                    case PredefinedErrorTypeNames.SyntaxError:
+                        errors++;
+                        break;
+                    case PredefinedErrorTypeNames.Warning:
+                        warnings++;
+                        break;
+                    case PredefinedErrorTypeNames.Suggestion:
+                    case "information":
+                        messages++;
+                        break;
                 }
-
-                if (!entry.TryGetValue(StandardTableKeyNames.ErrorSeverity, out __VSERRORCATEGORY severity))
-                {
-                    continue;
-                }
-
-                errors += severity == __VSERRORCATEGORY.EC_ERROR ? 1 : 0;
-                warnings += severity == __VSERRORCATEGORY.EC_WARNING ? 1 : 0;
-                messages += severity == __VSERRORCATEGORY.EC_MESSAGE ? 1 : 0;
             }
         }
 
@@ -228,9 +208,8 @@ namespace DocumentHealth
                 _isDisposed = true;
                 GC.SuppressFinalize(this);
 
-                _table.EntriesChanged -= OnEntriesChanged;
-                _view.GotAggregateFocus -= OnFocus;
-                _view.LostAggregateFocus -= OnFocusLost;
+                _aggregator.BatchedTagsChanged -= OnBatchedTagsChanged;
+                _aggregator.Dispose();
                 MouseUp -= OnMouseUp;
             }
         }
