@@ -1,5 +1,6 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.VisualStudio.Imaging;
 using Microsoft.VisualStudio.Imaging.Interop;
@@ -37,7 +38,6 @@ namespace DocumentHealth
             _aggregator = aggregator;
             _aggregator.BatchedTagsChanged += OnBatchedTagsChanged;
 
-            MouseUp += OnMouseUp;
             SetResourceReference(BackgroundProperty, EnvironmentColors.ScrollBarBackgroundBrushKey);
             Height = 16;
             ToolTip = ""; // instantiate the tooltip
@@ -53,7 +53,7 @@ namespace DocumentHealth
             }
         }
 
-        private void OnMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        protected override void OnMouseUp(MouseButtonEventArgs e)
         {
             VS.Commands.ExecuteAsync("View.NextError").FireAndForget();
         }
@@ -210,7 +210,6 @@ namespace DocumentHealth
 
                 _aggregator.BatchedTagsChanged -= OnBatchedTagsChanged;
                 _aggregator.Dispose();
-                MouseUp -= OnMouseUp;
             }
         }
     }

@@ -12,9 +12,5 @@ namespace DocumentHealth
     [Guid(PackageGuids.DocumentHealthString)]
     public sealed class DocumentHealthPackage : ToolkitPackage
     {
-        //protected override async Task InitializeAsync(CancellationToken cancellationToken, IProgress<ServiceProgressData> progress)
-        //{
-        //    await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
-        //}
     }
 }
