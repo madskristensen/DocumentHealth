@@ -1,5 +1,4 @@
-﻿using System.Threading.Tasks;
-using System.Windows;
+﻿using System.Windows;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Adornments;
 using Microsoft.VisualStudio.Text.Editor;
@@ -13,12 +12,14 @@ namespace DocumentHealth
         private readonly HealthStatusControl _status = new();
         private readonly IWpfTextView _view;
         private readonly ITagAggregator<IErrorTag> _aggregator;
+        private readonly JoinableTaskFactory _joinableTaskFactory;
         private bool _isDisposed, _updateQueued;
 
-        public HealthMargin(IWpfTextView textView, ITagAggregator<IErrorTag> aggregator)
+        public HealthMargin(IWpfTextView textView, ITagAggregator<IErrorTag> aggregator, JoinableTaskFactory joinableTaskFactory)
         {
             _view = textView;
             _aggregator = aggregator;
+            _joinableTaskFactory = joinableTaskFactory;
             _aggregator.BatchedTagsChanged += OnBatchedTagsChanged;
         }
 
@@ -33,18 +34,18 @@ namespace DocumentHealth
 
         public async Task UpdateAsync()
         {
-            // Debounce the update
-            await TaskScheduler.Default;
-            await Task.Delay(100);
-
-            // Schedule the update on the UI thread when it's idle
-            await ThreadHelper.JoinableTaskFactory.StartOnIdle(async () =>
+            try
             {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                await Task.Yield();
+                await _joinableTaskFactory.SwitchToMainThreadAsync();
+
                 GetErrorsAndWarnings(out var errors, out var warnings, out var messages);
                 _status.Update(errors, warnings, messages);
+            }
+            finally
+            {
                 _updateQueued = false;
-            }, VsTaskRunContext.UIThreadIdlePriority);
+            }
         }
 
         private void GetErrorsAndWarnings(out int errors, out int warnings, out int messages)
