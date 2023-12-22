@@ -1,47 +1,25 @@
-﻿using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Input;
-using System.Windows.Media;
-using Microsoft.VisualStudio.Imaging;
-using Microsoft.VisualStudio.Imaging.Interop;
-using Microsoft.VisualStudio.PlatformUI;
+﻿using System.Threading.Tasks;
+using System.Windows;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Adornments;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Tagging;
+using Microsoft.VisualStudio.Threading;
 
 namespace DocumentHealth
 {
-    internal class HealthMargin : DockPanel, IWpfTextViewMargin
+    internal class HealthMargin : IWpfTextViewMargin
     {
-        private static readonly RatingPrompt _rating = new("MadsKristensen.DocumentHealth", Vsix.Name, General.Instance, 3);
+        private readonly HealthStatusControl _status = new();
         private readonly IWpfTextView _view;
         private readonly ITagAggregator<IErrorTag> _aggregator;
-        private bool _isDisposed;
-        private int _currentErrors = -1;
-        private int _currentWarnings = -1;
-        private int _currentMessages = -1;
-        private ImageMoniker _moniker;
-        private bool _updateQueued;
-        private readonly CrispImage _image = new()
-        {
-            Width = 12,
-            Height = 12,
-            Margin = new Thickness(0, 3, 0, 0),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
+        private bool _isDisposed, _updateQueued;
 
         public HealthMargin(IWpfTextView textView, ITagAggregator<IErrorTag> aggregator)
         {
             _view = textView;
             _aggregator = aggregator;
             _aggregator.BatchedTagsChanged += OnBatchedTagsChanged;
-
-            SetResourceReference(BackgroundProperty, EnvironmentColors.ScrollBarBackgroundBrushKey);
-            Height = 16;
-            ToolTip = ""; // instantiate the tooltip
-            Children.Add(_image);
         }
 
         private void OnBatchedTagsChanged(object sender, BatchedTagsChangedEventArgs e)
@@ -49,120 +27,23 @@ namespace DocumentHealth
             if (!_updateQueued)
             {
                 _updateQueued = true;
-                _ = ThreadHelper.JoinableTaskFactory.StartOnIdle(UpdateAsync, VsTaskRunContext.UIThreadIdlePriority);
+                UpdateAsync().FireAndForget();
             }
-        }
-
-        protected override void OnMouseUp(MouseButtonEventArgs e)
-        {
-            VS.Commands.ExecuteAsync("View.NextError").FireAndForget();
         }
 
         public async Task UpdateAsync()
         {
-            // Ensure to execute on the UI thread
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            // Debounce the update
+            await TaskScheduler.Default;
+            await Task.Delay(100);
 
-            _updateQueued = false;
-
-            GetErrorsAndWarnings(out var errors, out var warnings, out var messages);
-
-            // If the values haven't changed, don't update the UI
-            if (_currentErrors == errors && _currentWarnings == warnings && _currentMessages == messages)
+            // Schedule the update on the UI thread when it's idle
+            await ThreadHelper.JoinableTaskFactory.StartOnIdle(async () =>
             {
-                return;
-            }
-
-            _currentErrors = errors;
-            _currentWarnings = warnings;
-            _currentMessages = messages;
-
-            ImageMoniker moniker = GetMoniker();
-
-            if (moniker.Id != _moniker.Id)
-            {
-                _image.Moniker = _moniker = moniker;
-            }
-        }
-
-        private ImageMoniker GetMoniker()
-        {
-            if (_currentErrors > 0)
-            {
-                return KnownMonikers.StatusError;
-            }
-            else if (_currentWarnings > 0)
-            {
-                return KnownMonikers.StatusWarning;
-            }
-
-            return KnownMonikers.StatusOK;
-        }
-
-        protected override void OnToolTipOpening(ToolTipEventArgs e)
-        {
-            var tooltip = new ToolTip
-            {
-                Background = FindResource(EnvironmentColors.ScrollBarBackgroundBrushKey) as Brush,
-                Padding = new Thickness(0),
-                Placement = System.Windows.Controls.Primitives.PlacementMode.Left,
-            };
-
-            var lineOne = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Margin = new Thickness(5, 0, 0, 0),
-            };
-
-            lineOne.Children.Add(new CrispImage
-            {
-                Moniker = KnownMonikers.StatusError,
-                Width = 14,
-                Height = 14,
-            });
-
-            lineOne.Children.Add(new Label
-            {
-                Content = _currentErrors,
-                Foreground = FindResource(EnvironmentColors.CommandBarTextHoverBrushKey) as Brush
-            });
-
-            lineOne.Children.Add(new CrispImage
-            {
-                Moniker = KnownMonikers.StatusWarning,
-                Width = 14,
-                Height = 14,
-                Margin = new Thickness(10, 0, 0, 0),
-            });
-
-            lineOne.Children.Add(new Label
-            {
-                Content = _currentWarnings,
-                Foreground = FindResource(EnvironmentColors.CommandBarTextHoverBrushKey) as Brush
-            });
-
-            lineOne.Children.Add(new CrispImage
-            {
-                Moniker = KnownMonikers.StatusInformation,
-                Width = 14,
-                Height = 14,
-                Margin = new Thickness(10, 0, 0, 0),
-            });
-
-            lineOne.Children.Add(new Label
-            {
-                Content = _currentMessages,
-                Foreground = FindResource(EnvironmentColors.CommandBarTextHoverBrushKey) as Brush
-            });
-
-            tooltip.Content = lineOne;
-
-            ToolTip = tooltip;
-
-            _ = ThreadHelper.JoinableTaskFactory.StartOnIdle(async () =>
-            {
-                await Task.Delay(5000);
-                _rating.RegisterSuccessfulUsage();
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                GetErrorsAndWarnings(out var errors, out var warnings, out var messages);
+                _status.Update(errors, warnings, messages);
+                _updateQueued = false;
             }, VsTaskRunContext.UIThreadIdlePriority);
         }
 
@@ -190,9 +71,9 @@ namespace DocumentHealth
             }
         }
 
-        public FrameworkElement VisualElement => this;
+        public FrameworkElement VisualElement => _status;
 
-        public double MarginSize => ActualHeight;
+        public double MarginSize => _status.ActualHeight;
 
         public bool Enabled => true;
 
