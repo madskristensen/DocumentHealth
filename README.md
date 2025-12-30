@@ -51,7 +51,20 @@ Use Visual Studio's built-in shortcuts to navigate between issues:
 | `Alt+PgDn` | Go to next error/warning |
 | `Alt+PgUp` | Go to previous error/warning |
 
-You can also **click the icon** to jump to the next error.
+You can also **click the icon** to jump to the next error, or **right-click** to access additional options:
+
+- Go to Next/Previous Error
+- Open Error List
+- Settings
+
+## Options
+
+Configure the extension under **Tools → Options → Environment → Document Health**:
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| Update delay (ms) | Delay before updating the indicator after changes. Higher values improve performance during rapid typing. | 250 |
+| Show messages count | Include suggestions and informational messages in the tooltip count. | true |
 
 ## How Can I Help?
 
