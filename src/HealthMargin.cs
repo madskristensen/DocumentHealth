@@ -1,4 +1,5 @@
-﻿using System.Windows;
+using System.Threading;
+using System.Windows;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Adornments;
 using Microsoft.VisualStudio.Text.Editor;
@@ -13,7 +14,8 @@ namespace DocumentHealth
         private readonly IWpfTextView _view;
         private readonly ITagAggregator<IErrorTag> _aggregator;
         private readonly JoinableTaskFactory _joinableTaskFactory;
-        private bool _isDisposed, _updateQueued;
+        private bool _isDisposed;
+        private int _updateQueued;
 
         public HealthMargin(IWpfTextView textView, ITagAggregator<IErrorTag> aggregator, JoinableTaskFactory joinableTaskFactory)
         {
@@ -25,12 +27,12 @@ namespace DocumentHealth
 
         private void OnBatchedTagsChanged(object sender, BatchedTagsChangedEventArgs e)
         {
-            if (!_updateQueued)
+            if (Interlocked.CompareExchange(ref _updateQueued, 1, 0) == 0)
             {
-                _updateQueued = true;
                 UpdateAsync().FireAndForget();
             }
         }
+
 
         public async Task UpdateAsync()
         {
@@ -39,12 +41,17 @@ namespace DocumentHealth
                 await Task.Yield();
                 await _joinableTaskFactory.SwitchToMainThreadAsync();
 
+                if (_isDisposed)
+                {
+                    return;
+                }
+
                 GetErrorsAndWarnings(out var errors, out var warnings, out var messages);
                 _status.Update(errors, warnings, messages);
             }
             finally
             {
-                _updateQueued = false;
+                Interlocked.Exchange(ref _updateQueued, 0);
             }
         }
 
@@ -52,23 +59,31 @@ namespace DocumentHealth
         {
             errors = warnings = messages = 0;
 
-            foreach (IMappingTagSpan<IErrorTag> tag in _aggregator.GetTags(new SnapshotSpan(_view.TextSnapshot, 0, _view.TextSnapshot.Length)))
+            try
             {
-                switch (tag.Tag.ErrorType)
+                ITextSnapshot snapshot = _view.TextSnapshot;
+                foreach (IMappingTagSpan<IErrorTag> tag in _aggregator.GetTags(new SnapshotSpan(snapshot, 0, snapshot.Length)))
                 {
-                    case PredefinedErrorTypeNames.CompilerError:
-                    case PredefinedErrorTypeNames.OtherError:
-                    case PredefinedErrorTypeNames.SyntaxError:
-                        errors++;
-                        break;
-                    case PredefinedErrorTypeNames.Warning:
-                        warnings++;
-                        break;
-                    case PredefinedErrorTypeNames.Suggestion:
-                    case "information":
-                        messages++;
-                        break;
+                    switch (tag.Tag.ErrorType)
+                    {
+                        case PredefinedErrorTypeNames.CompilerError:
+                        case PredefinedErrorTypeNames.OtherError:
+                        case PredefinedErrorTypeNames.SyntaxError:
+                            errors++;
+                            break;
+                        case PredefinedErrorTypeNames.Warning:
+                            warnings++;
+                            break;
+                        case PredefinedErrorTypeNames.Suggestion:
+                        case "information":
+                            messages++;
+                            break;
+                    }
                 }
+            }
+            catch (InvalidOperationException)
+            {
+                // Snapshot may have changed during enumeration; counts will update on next change
             }
         }
 
