@@ -14,14 +14,17 @@ namespace DocumentHealth
         private readonly IWpfTextView _view;
         private readonly ITagAggregator<IErrorTag> _aggregator;
         private readonly JoinableTaskFactory _joinableTaskFactory;
+        private readonly General _options;
         private bool _isDisposed;
         private int _updateQueued;
+        private CancellationTokenSource _debounceCts;
 
-        public HealthMargin(IWpfTextView textView, ITagAggregator<IErrorTag> aggregator, JoinableTaskFactory joinableTaskFactory)
+        public HealthMargin(IWpfTextView textView, ITagAggregator<IErrorTag> aggregator, JoinableTaskFactory joinableTaskFactory, General options)
         {
             _view = textView;
             _aggregator = aggregator;
             _joinableTaskFactory = joinableTaskFactory;
+            _options = options;
             _aggregator.BatchedTagsChanged += OnBatchedTagsChanged;
         }
 
@@ -29,25 +32,38 @@ namespace DocumentHealth
         {
             if (Interlocked.CompareExchange(ref _updateQueued, 1, 0) == 0)
             {
-                UpdateAsync().FireAndForget();
+                UpdateWithDebounceAsync().FireAndForget();
             }
         }
 
-
-        public async Task UpdateAsync()
+        private async Task UpdateWithDebounceAsync()
         {
             try
             {
-                await Task.Yield();
-                await _joinableTaskFactory.SwitchToMainThreadAsync();
+                // Cancel any previous pending update
+                _debounceCts?.Cancel();
+                _debounceCts = new CancellationTokenSource();
+                CancellationToken token = _debounceCts.Token;
 
-                if (_isDisposed)
+                var delay = Math.Max(0, _options.UpdateDelayMilliseconds);
+                if (delay > 0)
+                {
+                    await Task.Delay(delay, token);
+                }
+
+                await _joinableTaskFactory.SwitchToMainThreadAsync(token);
+
+                if (_isDisposed || token.IsCancellationRequested)
                 {
                     return;
                 }
 
                 GetErrorsAndWarnings(out var errors, out var warnings, out var messages);
-                _status.Update(errors, warnings, messages);
+                _status.Update(errors, warnings, _options.ShowMessages ? messages : 0);
+            }
+            catch (OperationCanceledException)
+            {
+                // Debounce cancelled, new update is coming
             }
             finally
             {
@@ -105,6 +121,8 @@ namespace DocumentHealth
                 _isDisposed = true;
                 GC.SuppressFinalize(this);
 
+                _debounceCts?.Cancel();
+                _debounceCts?.Dispose();
                 _aggregator.BatchedTagsChanged -= OnBatchedTagsChanged;
                 _aggregator.Dispose();
             }

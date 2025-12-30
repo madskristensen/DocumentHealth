@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.Composition;
+using System.ComponentModel.Composition;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Threading;
@@ -32,7 +32,7 @@ namespace DocumentHealth
 
             ITagAggregator<IErrorTag> aggregator = ViewTagAggregatorFactoryService.CreateTagAggregator<IErrorTag>(wpfTextViewHost.TextView, (TagAggregatorOptions)TagAggregatorOptions2.DeferTaggerCreation);
 
-            return new HealthMargin(wpfTextViewHost.TextView, aggregator, JoinableTaskContext.Factory);
+            return new HealthMargin(wpfTextViewHost.TextView, aggregator, JoinableTaskContext.Factory, General.Instance);
         }
     }
 }

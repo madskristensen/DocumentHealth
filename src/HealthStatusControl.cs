@@ -1,7 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media;
 using Microsoft.VisualStudio.Imaging;
 using Microsoft.VisualStudio.Imaging.Interop;
 using Microsoft.VisualStudio.PlatformUI;
@@ -23,10 +22,10 @@ namespace DocumentHealth
             Moniker = KnownMonikers.StatusNotStarted,
         };
 
-        private const string NoIssuesText = "No errors or warnings";
-        private const string ErrorsText = "{0} error(s)";
-        private const string WarningsText = "{0} warning(s)";
-        private const string MessagesText = "{0} message(s)";
+        private const string _noIssuesText = "No errors or warnings";
+        private const string _errorsText = "{0} error(s)";
+        private const string _warningsText = "{0} warning(s)";
+        private const string _messagesText = "{0} message(s)";
 
         private ToolTip _tooltip;
         private Label _errorLabel;
@@ -37,7 +36,7 @@ namespace DocumentHealth
         {
             SetResourceReference(BackgroundProperty, EnvironmentColors.ScrollBarBackgroundBrushKey);
             Height = 16;
-            System.Windows.Automation.AutomationProperties.SetName(_image, NoIssuesText);
+            System.Windows.Automation.AutomationProperties.SetName(_image, _noIssuesText);
             InitializeToolTip();
             Children.Add(_image);
         }
@@ -117,21 +116,21 @@ namespace DocumentHealth
         {
             if (errors == 0 && warnings == 0 && messages == 0)
             {
-                return NoIssuesText;
+                return _noIssuesText;
             }
 
             var parts = new System.Collections.Generic.List<string>(3);
             if (errors > 0)
             {
-                parts.Add(string.Format(ErrorsText, errors));
+                parts.Add(string.Format(_errorsText, errors));
             }
             if (warnings > 0)
             {
-                parts.Add(string.Format(WarningsText, warnings));
+                parts.Add(string.Format(_warningsText, warnings));
             }
             if (messages > 0)
             {
-                parts.Add(string.Format(MessagesText, messages));
+                parts.Add(string.Format(_messagesText, messages));
             }
             return string.Join(", ", parts);
         }
@@ -152,7 +151,52 @@ namespace DocumentHealth
 
         protected override void OnMouseUp(MouseButtonEventArgs e)
         {
-            VS.Commands.ExecuteAsync("View.NextError").FireAndForget();
+            if (e.ChangedButton == MouseButton.Left)
+            {
+                VS.Commands.ExecuteAsync("View.NextError").FireAndForget();
+            }
+        }
+
+
+
+
+
+
+
+        protected override void OnMouseRightButtonUp(MouseButtonEventArgs e)
+        {
+            e.Handled = true;
+            ShowContextMenu();
+        }
+
+        private void ShowContextMenu()
+        {
+            ContextMenu menu = new();
+
+            menu.Items.Add(CreateMenuItem("Go to Next Error", "View.NextError"));
+            menu.Items.Add(CreateMenuItem("Go to Previous Error", "View.PreviousError"));
+            menu.Items.Add(new Separator());
+            menu.Items.Add(CreateMenuItem("Open Error List", "View.ErrorList"));
+            menu.Items.Add(new Separator());
+            menu.Items.Add(CreateSettingsMenuItem());
+
+            menu.PlacementTarget = this;
+            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Left;
+            menu.IsOpen = true;
+        }
+
+        private static MenuItem CreateMenuItem(string header, string command)
+        {
+            MenuItem item = new() { Header = header };
+            item.Click += (s, e) => VS.Commands.ExecuteAsync(command).FireAndForget();
+            return item;
+        }
+
+        private static MenuItem CreateSettingsMenuItem()
+        {
+            MenuItem item = new() { Header = "Settings..." };
+            item.Click += (s, e) => VS.Settings.OpenAsync<OptionsProvider.GeneralOptions>().FireAndForget();
+            return item;
         }
 
         protected override void OnToolTipOpening(ToolTipEventArgs e)
