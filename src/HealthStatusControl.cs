@@ -31,6 +31,7 @@ namespace DocumentHealth
         private Label _errorLabel;
         private Label _warningLabel;
         private Label _messageLabel;
+        private readonly ContextMenu _contextMenu;
 
         public HealthStatusControl()
         {
@@ -38,6 +39,7 @@ namespace DocumentHealth
             Height = 16;
             System.Windows.Automation.AutomationProperties.SetName(_image, _noIssuesText);
             InitializeToolTip();
+            _contextMenu = CreateContextMenu();
             Children.Add(_image);
         }
 
@@ -157,12 +159,6 @@ namespace DocumentHealth
             }
         }
 
-
-
-
-
-
-
         protected override void OnMouseRightButtonUp(MouseButtonEventArgs e)
         {
             e.Handled = true;
@@ -171,8 +167,14 @@ namespace DocumentHealth
 
         private void ShowContextMenu()
         {
-            ContextMenu menu = new();
+            _contextMenu.PlacementTarget = this;
+            _contextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Left;
+            _contextMenu.IsOpen = true;
+        }
 
+        private ContextMenu CreateContextMenu()
+        {
+            ContextMenu menu = new();
             menu.Items.Add(CreateMenuItem("Go to Next Error", "View.NextError"));
             menu.Items.Add(CreateMenuItem("Go to Previous Error", "View.PreviousError"));
             menu.Items.Add(new Separator());
@@ -180,9 +182,7 @@ namespace DocumentHealth
             menu.Items.Add(new Separator());
             menu.Items.Add(CreateSettingsMenuItem());
 
-            menu.PlacementTarget = this;
-            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Left;
-            menu.IsOpen = true;
+            return menu;
         }
 
         private static MenuItem CreateMenuItem(string header, string command)

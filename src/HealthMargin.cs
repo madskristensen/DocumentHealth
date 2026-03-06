@@ -16,7 +16,7 @@ namespace DocumentHealth
         private readonly JoinableTaskFactory _joinableTaskFactory;
         private readonly General _options;
         private readonly object _updateGate = new();
-        private bool _isDisposed;
+        private volatile bool _isDisposed;
         private CancellationTokenSource _debounceCts;
 
         public HealthMargin(IWpfTextView textView, ITagAggregator<IErrorTag> aggregator, JoinableTaskFactory joinableTaskFactory, General options)
@@ -61,8 +61,12 @@ namespace DocumentHealth
             {
                 if (delay > 0)
                 {
-                    await Task.Delay(delay, token);
+                    await Task.Delay(delay, token).ConfigureAwait(false);
                 }
+
+                token.ThrowIfCancellationRequested();
+
+                (int errors, int warnings, int messages) = await Task.Run(() => GetErrorsAndWarnings(token), token).ConfigureAwait(false);
 
                 await _joinableTaskFactory.SwitchToMainThreadAsync(token);
 
@@ -71,24 +75,31 @@ namespace DocumentHealth
                     return;
                 }
 
-                GetErrorsAndWarnings(out var errors, out var warnings, out var messages);
                 _status.Update(errors, warnings, _options.ShowMessages ? messages : 0);
             }
             catch (OperationCanceledException)
             {
                 // Debounce cancelled, new update is coming
             }
+            catch (ObjectDisposedException)
+            {
+                // Margin or aggregator disposed while update was in flight
+            }
         }
 
-        private void GetErrorsAndWarnings(out int errors, out int warnings, out int messages)
+        private (int Errors, int Warnings, int Messages) GetErrorsAndWarnings(CancellationToken token)
         {
-            errors = warnings = messages = 0;
+            int errors = 0;
+            int warnings = 0;
+            int messages = 0;
 
             try
             {
                 ITextSnapshot snapshot = _view.TextSnapshot;
                 foreach (IMappingTagSpan<IErrorTag> tag in _aggregator.GetTags(new SnapshotSpan(snapshot, 0, snapshot.Length)))
                 {
+                    token.ThrowIfCancellationRequested();
+
                     switch (tag.Tag.ErrorType)
                     {
                         case PredefinedErrorTypeNames.CompilerError:
@@ -106,10 +117,17 @@ namespace DocumentHealth
                     }
                 }
             }
+            catch (ObjectDisposedException)
+            {
+                // View or aggregator may be disposed while tags are being enumerated
+            }
+
             catch (InvalidOperationException)
             {
                 // Snapshot may have changed during enumeration; counts will update on next change
             }
+
+            return (errors, warnings, messages);
         }
 
         public FrameworkElement VisualElement => _status;
@@ -127,18 +145,18 @@ namespace DocumentHealth
         {
             if (!_isDisposed)
             {
-                _isDisposed = true;
-                GC.SuppressFinalize(this);
+                _aggregator.BatchedTagsChanged -= OnBatchedTagsChanged;
 
                 lock (_updateGate)
                 {
+                    _isDisposed = true;
                     _debounceCts?.Cancel();
                     _debounceCts?.Dispose();
                     _debounceCts = null;
                 }
 
-                _aggregator.BatchedTagsChanged -= OnBatchedTagsChanged;
                 _aggregator.Dispose();
+                GC.SuppressFinalize(this);
             }
         }
     }
