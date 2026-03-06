@@ -16,6 +16,12 @@ namespace DocumentHealth
         [DefaultValue(true)]
         public bool ShowMessages { get; set; } = true;
 
+        [Category("Behavior")]
+        [DisplayName("Replace built-in indicator")]
+        [Description("Disable Visual Studio's built-in file health indicator and use this extension's indicator instead.")]
+        [DefaultValue(true)]
+        public bool ReplaceBuiltInIndicator { get; set; } = true;
+
         [Browsable(false)]
         public int RatingRequests { get; set; }
     }

@@ -37,7 +37,9 @@ Hover over the icon to see the exact count of errors, warnings, and messages.
 
 ### Cleaner Editor Layout
 
-This extension replaces the built-in *Document Health Indicator* at the bottom left of the editor, freeing up space for the horizontal scrollbar.
+By default, this extension replaces the built-in *Document Health Indicator* at the bottom left of the editor, freeing up space for the horizontal scrollbar.
+
+You can keep the built-in indicator if you prefer (see **Options** below).
 
 ![Built-in indicator comparison](art/indicator.png)
 
@@ -65,6 +67,12 @@ Configure the extension under **Tools → Options → Environment → Document H
 |--------|-------------|---------|
 | Update delay (ms) | Delay before updating the indicator after changes. Higher values improve performance during rapid typing. | 250 |
 | Show messages count | Include suggestions and informational messages in the tooltip count. | true |
+| Replace built-in indicator | Disable Visual Studio's built-in file health indicator and use this extension's indicator instead. | true |
+
+### Notes on behavior
+
+- The indicator now performs an initial health calculation when a document opens.
+- Updates use debounce behavior, so rapid typing delays refresh until activity settles.
 
 ## How Can I Help?
 

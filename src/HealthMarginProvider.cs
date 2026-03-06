@@ -24,8 +24,11 @@ namespace DocumentHealth
 
         public IWpfTextViewMargin CreateMargin(IWpfTextViewHost wpfTextViewHost, IWpfTextViewMargin marginContainer)
         {
-            // Disable File Health Indicator from showing up in the bottom left editor margin
-            wpfTextViewHost.TextView.Options.SetOptionValue(DefaultTextViewHostOptions.EnableFileHealthIndicatorOptionId, false);
+            // Optionally disable File Health Indicator from showing up in the bottom left editor margin
+            if (General.Instance.ReplaceBuiltInIndicator)
+            {
+                wpfTextViewHost.TextView.Options.SetOptionValue(DefaultTextViewHostOptions.EnableFileHealthIndicatorOptionId, false);
+            }
 
             // Register usage of the extension for showing a rating prompt
             _rating.RegisterSuccessfulUsage();

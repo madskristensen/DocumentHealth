@@ -15,8 +15,8 @@ namespace DocumentHealth
         private readonly ITagAggregator<IErrorTag> _aggregator;
         private readonly JoinableTaskFactory _joinableTaskFactory;
         private readonly General _options;
+        private readonly object _updateGate = new();
         private bool _isDisposed;
-        private int _updateQueued;
         private CancellationTokenSource _debounceCts;
 
         public HealthMargin(IWpfTextView textView, ITagAggregator<IErrorTag> aggregator, JoinableTaskFactory joinableTaskFactory, General options)
@@ -26,26 +26,39 @@ namespace DocumentHealth
             _joinableTaskFactory = joinableTaskFactory;
             _options = options;
             _aggregator.BatchedTagsChanged += OnBatchedTagsChanged;
+            ScheduleUpdate(immediate: true);
         }
 
         private void OnBatchedTagsChanged(object sender, BatchedTagsChangedEventArgs e)
         {
-            if (Interlocked.CompareExchange(ref _updateQueued, 1, 0) == 0)
-            {
-                UpdateWithDebounceAsync().FireAndForget();
-            }
+            ScheduleUpdate();
         }
 
-        private async Task UpdateWithDebounceAsync()
+        private void ScheduleUpdate(bool immediate = false)
+        {
+            CancellationTokenSource nextCts;
+
+            lock (_updateGate)
+            {
+                if (_isDisposed)
+                {
+                    return;
+                }
+
+                _debounceCts?.Cancel();
+                _debounceCts?.Dispose();
+                _debounceCts = new CancellationTokenSource();
+                nextCts = _debounceCts;
+            }
+
+            var delay = immediate ? 0 : Math.Max(0, _options.UpdateDelayMilliseconds);
+            UpdateWithDebounceAsync(nextCts.Token, delay).FireAndForget();
+        }
+
+        private async Task UpdateWithDebounceAsync(CancellationToken token, int delay)
         {
             try
             {
-                // Cancel any previous pending update
-                _debounceCts?.Cancel();
-                _debounceCts = new CancellationTokenSource();
-                CancellationToken token = _debounceCts.Token;
-
-                var delay = Math.Max(0, _options.UpdateDelayMilliseconds);
                 if (delay > 0)
                 {
                     await Task.Delay(delay, token);
@@ -64,10 +77,6 @@ namespace DocumentHealth
             catch (OperationCanceledException)
             {
                 // Debounce cancelled, new update is coming
-            }
-            finally
-            {
-                Interlocked.Exchange(ref _updateQueued, 0);
             }
         }
 
@@ -121,8 +130,13 @@ namespace DocumentHealth
                 _isDisposed = true;
                 GC.SuppressFinalize(this);
 
-                _debounceCts?.Cancel();
-                _debounceCts?.Dispose();
+                lock (_updateGate)
+                {
+                    _debounceCts?.Cancel();
+                    _debounceCts?.Dispose();
+                    _debounceCts = null;
+                }
+
                 _aggregator.BatchedTagsChanged -= OnBatchedTagsChanged;
                 _aggregator.Dispose();
             }
