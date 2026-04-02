@@ -72,6 +72,7 @@ namespace DocumentHealth
 
             _view.LayoutChanged += OnLayoutChanged;
             _view.Closed += OnViewClosed;
+            _view.TextBuffer.Changed += OnTextBufferChanged;
             _aggregator.BatchedTagsChanged += OnBatchedTagsChanged;
 
             ScheduleUpdate(immediate: true);
@@ -80,6 +81,52 @@ namespace DocumentHealth
         private void OnBatchedTagsChanged(object sender, BatchedTagsChangedEventArgs e)
         {
             ScheduleUpdate();
+        }
+
+        private void OnTextBufferChanged(object sender, TextContentChangedEventArgs e)
+        {
+            if (_isDisposed || _diagnosticsByLine.Count == 0)
+            {
+                return;
+            }
+
+            foreach (ITextChange change in e.Changes)
+            {
+                int newlinesBefore = CountNewlines(change.OldText);
+                int newlinesAfter = CountNewlines(change.NewText);
+
+                if (newlinesBefore != newlinesAfter)
+                {
+                    // Line count changed; clear stale diagnostics and adornments immediately
+                    _diagnosticsByLine = new Dictionary<int, LineDiagnostic>();
+                    _layer.RemoveAllAdornments();
+                    return;
+                }
+            }
+        }
+
+        private static int CountNewlines(string text)
+        {
+            int count = 0;
+
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] == '\r')
+                {
+                    count++;
+
+                    if (i + 1 < text.Length && text[i + 1] == '\n')
+                    {
+                        i++;
+                    }
+                }
+                else if (text[i] == '\n')
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         private void OnLayoutChanged(object sender, TextViewLayoutChangedEventArgs e)
@@ -511,6 +558,7 @@ namespace DocumentHealth
                 _isDisposed = true;
                 _view.LayoutChanged -= OnLayoutChanged;
                 _view.Closed -= OnViewClosed;
+                _view.TextBuffer.Changed -= OnTextBufferChanged;
                 _aggregator.BatchedTagsChanged -= OnBatchedTagsChanged;
 
                 lock (_updateGate)
