@@ -29,6 +29,12 @@ namespace DocumentHealth
         public bool ShowInlineMessages { get; set; } = true;
 
         [Category("Inline Diagnostics")]
+        [DisplayName("Show gutter icons")]
+        [Description("Display severity icons in the editor gutter for lines containing diagnostics.")]
+        [DefaultValue(true)]
+        public bool ShowGutterIcons { get; set; } = true;
+
+        [Category("Inline Diagnostics")]
         [DisplayName("Show errors")]
         [Description("Include error diagnostics in the inline messages and line highlights.")]
         [DefaultValue(true)]

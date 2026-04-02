@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>
@@ -46,6 +46,10 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="DiagnosticGlyphTagger.cs" />
+    <Compile Include="DiagnosticGlyphTag.cs" />
+    <Compile Include="DiagnosticGlyphFactory.cs" />
+    <Compile Include="DiagnosticContextMenu.cs" />
     <Compile Include="HealthMargin.cs" />
     <Compile Include="HealthMarginProvider.cs" />
     <Compile Include="InlineDiagnosticsAdornment.cs" />

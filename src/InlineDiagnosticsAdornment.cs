@@ -1,9 +1,12 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using Microsoft.VisualStudio.Imaging;
+using Microsoft.VisualStudio.Imaging.Interop;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Adornments;
 using Microsoft.VisualStudio.Text.Editor;
@@ -308,8 +311,24 @@ namespace DocumentHealth
                 FontSize = _view.FormattedLineSource.DefaultTextProperties.FontRenderingEmSize * 0.9,
                 FontFamily = _view.FormattedLineSource.DefaultTextProperties.Typeface.FontFamily,
                 FontStyle = FontStyles.Italic,
-                IsHitTestVisible = false,
+                IsHitTestVisible = true,
                 Opacity = 0.8,
+                Tag = diagnostic,
+                Cursor = System.Windows.Input.Cursors.Arrow,
+            };
+
+            ContextMenu contextMenu = DiagnosticContextMenu.Create(diagnostic);
+
+            textBlock.MouseRightButtonDown += (s, e) =>
+            {
+                e.Handled = true;
+            };
+
+            textBlock.MouseRightButtonUp += (s, e) =>
+            {
+                e.Handled = true;
+                contextMenu.PlacementTarget = textBlock;
+                contextMenu.IsOpen = true;
             };
 
             double left = viewLine.TextRight + 20;
@@ -329,6 +348,7 @@ namespace DocumentHealth
         /// Applies the user's message template to format the diagnostic information.
         /// </summary>
         private string ApplyMessageTemplate(LineDiagnostic diagnostic)
+
         {
             string template = _options.MessageTemplate ?? "{message}";
 
@@ -503,21 +523,21 @@ namespace DocumentHealth
                 _aggregator.Dispose();
             }
         }
+    }
 
-        internal enum DiagnosticSeverity
-        {
-            Message = 0,
-            Warning = 1,
-            Error = 2,
-        }
+    internal enum DiagnosticSeverity
+    {
+        Message = 0,
+        Warning = 1,
+        Error = 2,
+    }
 
-        internal class LineDiagnostic
-        {
-            public DiagnosticSeverity Severity { get; set; }
-            public string PrimaryMessage { get; set; }
-            public string DiagnosticCode { get; set; }
-            public string Source { get; set; }
-            public int Count { get; set; }
-        }
+    internal class LineDiagnostic
+    {
+        public DiagnosticSeverity Severity { get; set; }
+        public string PrimaryMessage { get; set; }
+        public string DiagnosticCode { get; set; }
+        public string Source { get; set; }
+        public int Count { get; set; }
     }
 }

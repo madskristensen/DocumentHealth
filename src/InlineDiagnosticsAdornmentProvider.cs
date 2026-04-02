@@ -15,7 +15,7 @@ namespace DocumentHealth
 
         [Export(typeof(AdornmentLayerDefinition))]
         [Name(AdornmentLayerName)]
-        [Order(Before = PredefinedAdornmentLayers.Selection)]
+        [Order(After = PredefinedAdornmentLayers.Text)]
         private AdornmentLayerDefinition _editorAdornmentLayer;
 
         [Import]
