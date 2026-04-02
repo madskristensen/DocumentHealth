@@ -111,8 +111,26 @@ namespace DocumentHealth
                             warnings++;
                             break;
                         case PredefinedErrorTypeNames.Suggestion:
+                        case PredefinedErrorTypeNames.HintedSuggestion:
                         case "information":
                             messages++;
+                            break;
+                        default:
+                            string errorType = tag.Tag.ErrorType ?? "";
+
+                            if (errorType.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                errors++;
+                            }
+                            else if (errorType.IndexOf("warning", StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                warnings++;
+                            }
+                            else
+                            {
+                                messages++;
+                            }
+
                             break;
                     }
                 }

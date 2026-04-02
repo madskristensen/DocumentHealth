@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
@@ -224,7 +225,12 @@ namespace DocumentHealth
 
                     if (string.IsNullOrWhiteSpace(message))
                     {
-                        continue;
+                        message = ExtractDescriptionViaReflection(tagSpan.Tag);
+                    }
+
+                    if (string.IsNullOrWhiteSpace(message))
+                    {
+                        message = GetFallbackMessage(severity);
                     }
 
                     // Try to extract and strip the diagnostic code prefix from the message
@@ -461,6 +467,29 @@ namespace DocumentHealth
         }
 
         /// <summary>
+        /// Some IErrorTag implementations (e.g. JsonErrorTag) store the message in a
+        /// "Description" property that is not part of the IErrorTag interface.
+        /// </summary>
+        private static string ExtractDescriptionViaReflection(IErrorTag tag)
+        {
+            try
+            {
+                PropertyInfo prop = tag.GetType().GetProperty("Description", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (prop != null && prop.PropertyType == typeof(string))
+                {
+                    return prop.GetValue(tag) as string;
+                }
+            }
+            catch
+            {
+                // Reflection may fail for security or access reasons; fall through
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Attempts to extract a diagnostic code (like "CS0168") from the beginning of a message string.
         /// </summary>
         private static string ExtractDiagnosticCode(string message)
@@ -518,6 +547,11 @@ namespace DocumentHealth
 
         private static DiagnosticSeverity GetSeverity(string errorType)
         {
+            if (string.IsNullOrEmpty(errorType))
+            {
+                return DiagnosticSeverity.Message;
+            }
+
             switch (errorType)
             {
                 case PredefinedErrorTypeNames.CompilerError:
@@ -526,8 +560,34 @@ namespace DocumentHealth
                     return DiagnosticSeverity.Error;
                 case PredefinedErrorTypeNames.Warning:
                     return DiagnosticSeverity.Warning;
-                default:
+                case PredefinedErrorTypeNames.Suggestion:
+                case PredefinedErrorTypeNames.HintedSuggestion:
                     return DiagnosticSeverity.Message;
+                default:
+                    if (errorType.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        return DiagnosticSeverity.Error;
+                    }
+
+                    if (errorType.IndexOf("warning", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        return DiagnosticSeverity.Warning;
+                    }
+
+                    return DiagnosticSeverity.Message;
+            }
+        }
+
+        private static string GetFallbackMessage(DiagnosticSeverity severity)
+        {
+            switch (severity)
+            {
+                case DiagnosticSeverity.Error:
+                    return "Error";
+                case DiagnosticSeverity.Warning:
+                    return "Warning";
+                default:
+                    return "Message";
             }
         }
 

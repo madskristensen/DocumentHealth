@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Adornments;
@@ -221,7 +222,12 @@ namespace DocumentHealth
 
                     if (string.IsNullOrWhiteSpace(message))
                     {
-                        continue;
+                        message = ExtractDescriptionViaReflection(tagSpan.Tag);
+                    }
+
+                    if (string.IsNullOrWhiteSpace(message))
+                    {
+                        message = GetFallbackMessage(severity);
                     }
 
                     string diagnosticCode = ExtractDiagnosticCode(message);
@@ -314,6 +320,11 @@ namespace DocumentHealth
 
         private static DiagnosticSeverity GetSeverity(string errorType)
         {
+            if (string.IsNullOrEmpty(errorType))
+            {
+                return DiagnosticSeverity.Message;
+            }
+
             switch (errorType)
             {
                 case PredefinedErrorTypeNames.CompilerError:
@@ -322,8 +333,34 @@ namespace DocumentHealth
                     return DiagnosticSeverity.Error;
                 case PredefinedErrorTypeNames.Warning:
                     return DiagnosticSeverity.Warning;
-                default:
+                case PredefinedErrorTypeNames.Suggestion:
+                case PredefinedErrorTypeNames.HintedSuggestion:
                     return DiagnosticSeverity.Message;
+                default:
+                    if (errorType.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        return DiagnosticSeverity.Error;
+                    }
+
+                    if (errorType.IndexOf("warning", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        return DiagnosticSeverity.Warning;
+                    }
+
+                    return DiagnosticSeverity.Message;
+            }
+        }
+
+        private static string GetFallbackMessage(DiagnosticSeverity severity)
+        {
+            switch (severity)
+            {
+                case DiagnosticSeverity.Error:
+                    return "Error";
+                case DiagnosticSeverity.Warning:
+                    return "Warning";
+                default:
+                    return "Message";
             }
         }
 
@@ -352,6 +389,29 @@ namespace DocumentHealth
                 default:
                     return content.ToString();
             }
+        }
+
+        /// <summary>
+        /// Some IErrorTag implementations (e.g. JsonErrorTag) store the message in a
+        /// "Description" property that is not part of the IErrorTag interface.
+        /// </summary>
+        private static string ExtractDescriptionViaReflection(IErrorTag tag)
+        {
+            try
+            {
+                PropertyInfo prop = tag.GetType().GetProperty("Description", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (prop != null && prop.PropertyType == typeof(string))
+                {
+                    return prop.GetValue(tag) as string;
+                }
+            }
+            catch
+            {
+                // Reflection may fail for security or access reasons; fall through
+            }
+
+            return null;
         }
 
         private static string ExtractDiagnosticCode(string message)
