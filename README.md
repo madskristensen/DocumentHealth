@@ -59,6 +59,19 @@ You can also **click the icon** to jump to the next error, or **right-click** to
 - Open Error List
 - Settings
 
+### Inline Diagnostics
+
+See diagnostic messages directly in the editor, right at the end of the line that caused them — no need to check the Error List.
+
+### Line Highlighting
+
+Lines with errors or warnings are highlighted with a subtle background tint colored by severity:
+
+- **Red** tint for errors
+- **Yellow** tint for warnings
+
+Both features can be toggled independently in the options.
+
 ## Options
 
 Configure the extension under **Tools → Options → Environment → Document Health**:
@@ -68,6 +81,8 @@ Configure the extension under **Tools → Options → Environment → Document H
 | Update delay (ms) | Delay before updating the indicator after changes. Higher values improve performance during rapid typing. | 250 |
 | Show messages count | Include suggestions and informational messages in the tooltip count. | true |
 | Replace built-in indicator | Disable Visual Studio's built-in file health indicator and use this extension's indicator instead. | true |
+| Show inline messages | Display diagnostic messages inline at the end of lines containing errors or warnings. | true |
+| Highlight lines | Highlight the background of lines containing errors or warnings with a severity-colored tint. | true |
 
 ### Notes on behavior
 

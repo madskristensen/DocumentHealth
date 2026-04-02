@@ -22,6 +22,24 @@ namespace DocumentHealth
         [DefaultValue(true)]
         public bool ReplaceBuiltInIndicator { get; set; } = true;
 
+        [Category("Inline Diagnostics")]
+        [DisplayName("Show inline messages")]
+        [Description("Display diagnostic messages inline at the end of lines containing errors or warnings.")]
+        [DefaultValue(true)]
+        public bool ShowInlineMessages { get; set; } = true;
+
+        [Category("Inline Diagnostics")]
+        [DisplayName("Highlight lines")]
+        [Description("Highlight the background of lines containing errors or warnings with a severity-colored tint.")]
+        [DefaultValue(true)]
+        public bool HighlightLines { get; set; } = true;
+
+        [Category("Inline Diagnostics")]
+        [DisplayName("Highlight messages")]
+        [Description("Also highlight lines that only contain low-severity informational messages. When disabled, only errors and warnings are highlighted.")]
+        [DefaultValue(false)]
+        public bool HighlightMessages { get; set; } = false;
+
         [Browsable(false)]
         public int RatingRequests { get; set; }
     }
