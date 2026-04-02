@@ -18,6 +18,10 @@
     {
       "pathOnDisk": "art/indicator.png",
       "targetPath": "art/indicator.png"
+    },
+    {
+      "pathOnDisk": "art/line-highlighting.png",
+      "targetPath": "art/line-highlighting.png"
     }
   ],
   "overview": "README.md",

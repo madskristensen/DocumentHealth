@@ -29,18 +29,44 @@ namespace DocumentHealth
         public bool ShowInlineMessages { get; set; } = true;
 
         [Category("Inline Diagnostics")]
-        [DisplayName("Highlight lines")]
-        [Description("Highlight the background of lines containing errors or warnings with a severity-colored tint.")]
+        [DisplayName("Show errors")]
+        [Description("Include error diagnostics in the inline messages and line highlights.")]
         [DefaultValue(true)]
-        public bool HighlightLines { get; set; } = true;
+        public bool ShowErrors { get; set; } = true;
 
         [Category("Inline Diagnostics")]
-        [DisplayName("Highlight messages")]
-        [Description("Also highlight lines that only contain low-severity informational messages. When disabled, only errors and warnings are highlighted.")]
+        [DisplayName("Show warnings")]
+        [Description("Include warning diagnostics in the inline messages and line highlights.")]
+        [DefaultValue(true)]
+        public bool ShowWarnings { get; set; } = true;
+
+        [Category("Inline Diagnostics")]
+        [DisplayName("Show suggestions")]
+        [Description("Include informational and suggestion diagnostics in the inline messages and line highlights.")]
         [DefaultValue(false)]
-        public bool HighlightMessages { get; set; } = false;
+        public bool ShowSuggestions { get; set; } = false;
+
+        [Category("Inline Diagnostics")]
+        [DisplayName("Highlight lines")]
+        [Description("Controls which severity levels get line background highlighting.")]
+        [DefaultValue(HighlightSeverity.ErrorsAndWarnings)]
+        public HighlightSeverity HighlightLines { get; set; } = HighlightSeverity.ErrorsAndWarnings;
+
+        [Category("Inline Diagnostics")]
+        [DisplayName("Message template")]
+        [Description("Customize the format of inline diagnostic messages. Supported placeholders: {message} (diagnostic text), {code} (diagnostic ID), {severity} (Error/Warning/Info), {source} (analyzer name).")]
+        [DefaultValue("{message}")]
+        public string MessageTemplate { get; set; } = "{message}";
 
         [Browsable(false)]
         public int RatingRequests { get; set; }
+    }
+
+    public enum HighlightSeverity
+    {
+        None,
+        Errors,
+        ErrorsAndWarnings,
+        All,
     }
 }

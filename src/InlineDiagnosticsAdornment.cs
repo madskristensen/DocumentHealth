@@ -164,12 +164,27 @@ namespace DocumentHealth
                     SnapshotSpan span = spans[0];
                     int lineNumber = snapshot.GetLineNumberFromPosition(span.Start.Position);
                     DiagnosticSeverity severity = GetSeverity(tagSpan.Tag.ErrorType);
+
+                    if (!IsSeverityEnabled(severity))
+                    {
+                        continue;
+                    }
+
                     string message = ExtractTooltipText(tagSpan.Tag.ToolTipContent);
 
                     if (string.IsNullOrWhiteSpace(message))
                     {
                         continue;
                     }
+
+                    // Try to extract and strip the diagnostic code prefix from the message
+                    string diagnosticCode = ExtractDiagnosticCode(message);
+                    if (!string.IsNullOrEmpty(diagnosticCode))
+                    {
+                        message = StripCodePrefix(message, diagnosticCode);
+                    }
+
+                    string source = null;
 
                     if (result.TryGetValue(lineNumber, out LineDiagnostic existing))
                     {
@@ -178,6 +193,8 @@ namespace DocumentHealth
                         {
                             existing.Severity = severity;
                             existing.PrimaryMessage = message;
+                            existing.DiagnosticCode = diagnosticCode;
+                            existing.Source = source;
                         }
 
                         existing.Count++;
@@ -188,6 +205,8 @@ namespace DocumentHealth
                         {
                             Severity = severity,
                             PrimaryMessage = message,
+                            DiagnosticCode = diagnosticCode,
+                            Source = source,
                             Count = 1,
                         };
                     }
@@ -224,7 +243,7 @@ namespace DocumentHealth
                     continue;
                 }
 
-                if (_options.HighlightLines && (diagnostic.Severity > DiagnosticSeverity.Message || _options.HighlightMessages))
+                if (ShouldHighlight(diagnostic.Severity))
                 {
                     RenderLineHighlight(viewLine, diagnostic);
                 }
@@ -261,9 +280,15 @@ namespace DocumentHealth
 
         private void RenderInlineMessage(ITextViewLine viewLine, LineDiagnostic diagnostic)
         {
-            string displayMessage = diagnostic.Count > 1
-                ? $"  {diagnostic.PrimaryMessage} (+{diagnostic.Count - 1} more)"
-                : $"  {diagnostic.PrimaryMessage}";
+            // Apply the message template
+            string displayMessage = ApplyMessageTemplate(diagnostic);
+
+            if (diagnostic.Count > 1)
+            {
+                displayMessage += $" (+{diagnostic.Count - 1} more)";
+            }
+
+            displayMessage = "  " + displayMessage;
 
             // Truncate long messages
             if (displayMessage.Length > 200)
@@ -301,6 +326,37 @@ namespace DocumentHealth
         }
 
         /// <summary>
+        /// Applies the user's message template to format the diagnostic information.
+        /// </summary>
+        private string ApplyMessageTemplate(LineDiagnostic diagnostic)
+        {
+            string template = _options.MessageTemplate ?? "{message}";
+
+            // Replace placeholders with actual values
+            string result = template
+                .Replace("{message}", diagnostic.PrimaryMessage ?? "")
+                .Replace("{code}", diagnostic.DiagnosticCode ?? "")
+                .Replace("{severity}", GetSeverityLabel(diagnostic.Severity))
+                .Replace("{source}", diagnostic.Source ?? "");
+
+            return result;
+        }
+
+        /// <summary>
+        /// Gets the human-readable severity label for template substitution.
+        /// </summary>
+        private static string GetSeverityLabel(DiagnosticSeverity severity)
+        {
+            switch (severity)
+            {
+                case DiagnosticSeverity.Error: return "Error";
+                case DiagnosticSeverity.Warning: return "Warning";
+                case DiagnosticSeverity.Message: return "Info";
+                default: return "";
+            }
+        }
+
+        /// <summary>
         /// Extracts plain text from a tooltip content object, which may be a string,
         /// a <see cref="ContainerElement"/>, a <see cref="ClassifiedTextElement"/>,
         /// or a <see cref="ClassifiedTextRun"/>.
@@ -334,6 +390,62 @@ namespace DocumentHealth
 
                 default:
                     return content.ToString();
+            }
+        }
+
+        /// <summary>
+        /// Attempts to extract a diagnostic code (like "CS0168") from the beginning of a message string.
+        /// </summary>
+        private static string ExtractDiagnosticCode(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return null;
+            }
+
+            // Match a leading diagnostic code pattern like "CS0168:" or "CA1000:"
+            var match = System.Text.RegularExpressions.Regex.Match(message, @"^([A-Z]{2,4}\d{4,5})\s*:");
+            return match.Success ? match.Groups[1].Value : null;
+        }
+
+        /// <summary>
+        /// Strips the diagnostic code prefix (e.g. "CS0161: ") from the message text.
+        /// </summary>
+        private static string StripCodePrefix(string message, string code)
+        {
+            // Remove patterns like "CS0161: " or "CS0161 : "
+            var match = System.Text.RegularExpressions.Regex.Match(message, @"^" + System.Text.RegularExpressions.Regex.Escape(code) + @"\s*:\s*");
+            if (match.Success)
+            {
+                return message.Substring(match.Length);
+            }
+
+            return message;
+        }
+
+        private bool ShouldHighlight(DiagnosticSeverity severity)
+        {
+            switch (_options.HighlightLines)
+            {
+                case HighlightSeverity.All:
+                    return true;
+                case HighlightSeverity.ErrorsAndWarnings:
+                    return severity >= DiagnosticSeverity.Warning;
+                case HighlightSeverity.Errors:
+                    return severity >= DiagnosticSeverity.Error;
+                default:
+                    return false;
+            }
+        }
+
+        private bool IsSeverityEnabled(DiagnosticSeverity severity)
+        {
+            switch (severity)
+            {
+                case DiagnosticSeverity.Error: return _options.ShowErrors;
+                case DiagnosticSeverity.Warning: return _options.ShowWarnings;
+                case DiagnosticSeverity.Message: return _options.ShowSuggestions;
+                default: return true;
             }
         }
 
@@ -403,6 +515,8 @@ namespace DocumentHealth
         {
             public DiagnosticSeverity Severity { get; set; }
             public string PrimaryMessage { get; set; }
+            public string DiagnosticCode { get; set; }
+            public string Source { get; set; }
             public int Count { get; set; }
         }
     }

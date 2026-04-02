@@ -175,28 +175,45 @@ namespace DocumentHealth
         private ContextMenu CreateContextMenu()
         {
             ContextMenu menu = new();
-            menu.Items.Add(CreateMenuItem("Go to Next Error", "View.NextError"));
-            menu.Items.Add(CreateMenuItem("Go to Previous Error", "View.PreviousError"));
+
+            menu.Items.Add(CreateMenuItem("Go to Next Error", KnownMonikers.NextError, "View.NextError"));
+            menu.Items.Add(CreateMenuItem("Go to Previous Error", KnownMonikers.PreviousError, "View.PreviousError"));
             menu.Items.Add(new Separator());
-            menu.Items.Add(CreateMenuItem("Open Error List", "View.ErrorList"));
+            menu.Items.Add(CreateMenuItem("Open Error List", KnownMonikers.TaskList, "View.ErrorList"));
             menu.Items.Add(new Separator());
             menu.Items.Add(CreateSettingsMenuItem());
+
+            ThemedContextMenuHelper.ApplyVsTheme(menu);
 
             return menu;
         }
 
-        private static MenuItem CreateMenuItem(string header, string command)
+        private static MenuItem CreateMenuItem(string header, ImageMoniker moniker, string command)
         {
-            MenuItem item = new() { Header = header };
+            MenuItem item = CreateIconMenuItem(header, moniker);
             item.Click += (s, e) => VS.Commands.ExecuteAsync(command).FireAndForget();
             return item;
         }
 
         private static MenuItem CreateSettingsMenuItem()
         {
-            MenuItem item = new() { Header = "Settings..." };
+            MenuItem item = CreateIconMenuItem("Settings...", KnownMonikers.Settings);
             item.Click += (s, e) => VS.Settings.OpenAsync<OptionsProvider.GeneralOptions>().FireAndForget();
             return item;
+        }
+
+        private static MenuItem CreateIconMenuItem(string header, ImageMoniker moniker)
+        {
+            return new MenuItem
+            {
+                Header = header,
+                Icon = new CrispImage
+                {
+                    Moniker = moniker,
+                    Width = 16,
+                    Height = 16,
+                },
+            };
         }
 
         protected override void OnToolTipOpening(ToolTipEventArgs e)

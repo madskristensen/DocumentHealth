@@ -63,12 +63,36 @@ You can also **click the icon** to jump to the next error, or **right-click** to
 
 See diagnostic messages directly in the editor, right at the end of the line that caused them — no need to check the Error List.
 
+![Line Highlighting](art/line-highlighting.png)
+
+#### Message Templates
+
+Customize the format of inline diagnostic messages using a template string. The default template is `{message}`, which shows just the diagnostic text.
+
+Supported placeholders:
+
+| Placeholder | Description | Example |
+|-------------|-------------|---------|
+| `{message}` | The diagnostic message text | The variable 'x' is declared but never used |
+| `{code}` | The diagnostic code | CS0168 |
+| `{severity}` | The severity level | Error, Warning, Info |
+| `{source}` | The analyzer/source name | — |
+
+Example templates:
+
+| Template | Result |
+|----------|--------|
+| `{message}` | The variable 'x' is declared but never used |
+| `{code}: {message}` | CS0168: The variable 'x' is declared but never used |
+| `[{severity}] {message}` | [Warning] The variable 'x' is declared but never used |
+| `{severity} {code}: {message}` | Warning CS0168: The variable 'x' is declared but never used |
+
 ### Line Highlighting
 
 Lines with errors or warnings are highlighted with a subtle background tint colored by severity:
 
 - **Red** tint for errors
-- **Yellow** tint for warnings
+- **Yellow** tint for warning
 
 Both features can be toggled independently in the options.
 
@@ -82,7 +106,11 @@ Configure the extension under **Tools → Options → Environment → Document H
 | Show messages count | Include suggestions and informational messages in the tooltip count. | true |
 | Replace built-in indicator | Disable Visual Studio's built-in file health indicator and use this extension's indicator instead. | true |
 | Show inline messages | Display diagnostic messages inline at the end of lines containing errors or warnings. | true |
-| Highlight lines | Highlight the background of lines containing errors or warnings with a severity-colored tint. | true |
+| Show errors | Include error diagnostics in the inline messages and line highlights. | true |
+| Show warnings | Include warning diagnostics in the inline messages and line highlights. | true |
+| Show suggestions | Include informational and suggestion diagnostics in the inline messages and line highlights. | false |
+| Highlight lines | Controls which severity levels get line background highlighting. | Errors and Warnings |
+| Message template | Customize the format of inline messages using placeholders: `{message}`, `{code}`, `{severity}`, `{source}`. | `{message}` |
 
 ### Notes on behavior
 
