@@ -28,7 +28,7 @@ namespace DocumentHealth
         {
             General options = General.Instance;
 
-            if (!options.ShowInlineMessages && options.HighlightLines == HighlightSeverity.None)
+            if (!options.ShowInlineMessages && options.HighlightLines == SeverityFilter.None)
             {
                 return;
             }

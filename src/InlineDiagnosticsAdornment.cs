@@ -494,11 +494,11 @@ namespace DocumentHealth
         {
             switch (_options.HighlightLines)
             {
-                case HighlightSeverity.All:
+                case SeverityFilter.All:
                     return true;
-                case HighlightSeverity.ErrorsAndWarnings:
+                case SeverityFilter.ErrorsAndWarnings:
                     return severity >= DiagnosticSeverity.Warning;
-                case HighlightSeverity.Errors:
+                case SeverityFilter.Errors:
                     return severity >= DiagnosticSeverity.Error;
                 default:
                     return false;

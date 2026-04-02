@@ -30,9 +30,9 @@ namespace DocumentHealth
 
         [Category("Inline Diagnostics")]
         [DisplayName("Show gutter icons")]
-        [Description("Display severity icons in the editor gutter for lines containing diagnostics.")]
-        [DefaultValue(true)]
-        public bool ShowGutterIcons { get; set; } = true;
+        [Description("Controls which severity levels get gutter icons in the editor for lines containing diagnostics.")]
+        [DefaultValue(SeverityFilter.ErrorsAndWarnings)]
+        public SeverityFilter ShowGutterIcons { get; set; } = SeverityFilter.ErrorsAndWarnings;
 
         [Category("Inline Diagnostics")]
         [DisplayName("Show errors")]
@@ -55,8 +55,8 @@ namespace DocumentHealth
         [Category("Inline Diagnostics")]
         [DisplayName("Highlight lines")]
         [Description("Controls which severity levels get line background highlighting.")]
-        [DefaultValue(HighlightSeverity.ErrorsAndWarnings)]
-        public HighlightSeverity HighlightLines { get; set; } = HighlightSeverity.ErrorsAndWarnings;
+        [DefaultValue(SeverityFilter.ErrorsAndWarnings)]
+        public SeverityFilter HighlightLines { get; set; } = SeverityFilter.ErrorsAndWarnings;
 
         [Category("Inline Diagnostics")]
         [DisplayName("Message template")]
@@ -68,7 +68,7 @@ namespace DocumentHealth
         public int RatingRequests { get; set; }
     }
 
-    public enum HighlightSeverity
+    public enum SeverityFilter
     {
         None,
         Errors,

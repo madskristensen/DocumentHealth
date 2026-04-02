@@ -33,7 +33,7 @@ namespace DocumentHealth
 
             General options = General.Instance;
 
-            if (!options.ShowGutterIcons)
+            if (options.ShowGutterIcons == SeverityFilter.None)
             {
                 return null;
             }
@@ -275,7 +275,7 @@ namespace DocumentHealth
 
                 for (int line = startLine; line <= endLine; line++)
                 {
-                    if (_diagnosticsByLine.TryGetValue(line, out LineDiagnostic diagnostic))
+                    if (_diagnosticsByLine.TryGetValue(line, out LineDiagnostic diagnostic) && ShouldShowGlyph(diagnostic.Severity))
                     {
                         ITextSnapshotLine snapshotLine = snapshot.GetLineFromLineNumber(line);
                         SnapshotSpan lineSpan = new SnapshotSpan(snapshotLine.Start, snapshotLine.Length > 0 ? 1 : 0);
@@ -283,6 +283,21 @@ namespace DocumentHealth
                         yield return new TagSpan<DiagnosticGlyphTag>(lineSpan, new DiagnosticGlyphTag(diagnostic));
                     }
                 }
+            }
+        }
+
+        private bool ShouldShowGlyph(DiagnosticSeverity severity)
+        {
+            switch (_options.ShowGutterIcons)
+            {
+                case SeverityFilter.All:
+                    return true;
+                case SeverityFilter.ErrorsAndWarnings:
+                    return severity >= DiagnosticSeverity.Warning;
+                case SeverityFilter.Errors:
+                    return severity >= DiagnosticSeverity.Error;
+                default:
+                    return false;
             }
         }
 
