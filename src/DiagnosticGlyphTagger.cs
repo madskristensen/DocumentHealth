@@ -41,6 +41,13 @@ namespace DocumentHealth
                 return null;
             }
 
+            // Skip if the glyph margin is disabled (e.g., by another extension).
+            // No point creating a tagger when nothing will consume the tags.
+            if (!textView.Options.GetOptionValue(DefaultTextViewHostOptions.GlyphMarginId))
+            {
+                return null;
+            }
+
             DiagnosticDataProvider dataProvider = DiagnosticDataProvider.GetOrCreate(
                 textView, JoinableTaskContext.Factory, options, TableManagerProvider, ServiceProvider, ViewTagAggregatorFactoryService);
 

@@ -168,8 +168,10 @@ namespace DocumentHealth
                 return;
             }
 
-            // Immediately collect diagnostics from error tags for fast UI response
-            ScheduleUpdate(immediate: true);
+            // Use debounced update to avoid excessive UI thread work during rapid typing.
+            // Roslyn fires batched tag changes frequently; immediate updates here would
+            // bypass the debounce and cause typing lag in large files.
+            ScheduleUpdate();
         }
 
         private void OnTextBufferChanged(object sender, TextContentChangedEventArgs e)
@@ -256,15 +258,8 @@ namespace DocumentHealth
 
                 token.ThrowIfCancellationRequested();
 
-                // Switch to UI thread to read Error List data (IWpfTableControl.Entries requires UI thread)
-                await _joinableTaskFactory.SwitchToMainThreadAsync(token);
-
-                if (_isDisposed || token.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                // First, collect diagnostics from error tags (fast path - immediate feedback)
+                // Collect diagnostics from error tags on a background thread.
+                // ITagAggregator.GetTags is thread-safe and does not require the UI thread.
                 Dictionary<int, LineDiagnostic> diagnostics = CollectDiagnosticsFromErrorTags();
 
                 if (_isDisposed || token.IsCancellationRequested)
@@ -272,7 +267,16 @@ namespace DocumentHealth
                     return;
                 }
 
-                // Then, enhance with Error List data (slower but has complete information)
+                // Switch to UI thread for Error List access (IWpfTableControl.Entries requires it)
+                // and to notify subscribers (they update WPF adornments)
+                await _joinableTaskFactory.SwitchToMainThreadAsync(token);
+
+                if (_isDisposed || token.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                // Enhance with Error List data
                 Dictionary<int, LineDiagnostic> errorListDiagnostics = CollectDiagnosticsFromErrorList();
                 MergeDiagnostics(diagnostics, errorListDiagnostics);
 
@@ -283,7 +287,6 @@ namespace DocumentHealth
 
                 _diagnosticsByLine = diagnostics;
 
-                // Notify subscribers that data has been updated
                 DiagnosticsUpdated?.Invoke(this, EventArgs.Empty);
             }
             catch (OperationCanceledException)
@@ -458,7 +461,7 @@ namespace DocumentHealth
 
         /// <summary>
         /// Collects diagnostics from the Error List for the current document.
-        /// Must be called on the UI thread.
+        /// Must be called on the UI thread (IWpfTableControl.Entries requires it).
         /// </summary>
         private Dictionary<int, LineDiagnostic> CollectDiagnosticsFromErrorList()
         {
@@ -472,7 +475,7 @@ namespace DocumentHealth
                     return result;
                 }
 
-                // Prefer IErrorList.TableControl.Entries for direct access
+                // Use IErrorList.TableControl.Entries for reliable access to Error List data
                 if (_errorList?.TableControl != null)
                 {
                     try
@@ -482,7 +485,6 @@ namespace DocumentHealth
                             ProcessErrorListEntry(result, entry, documentPath);
                         }
 
-                        // If we got entries from the table control, we are done
                         if (result.Count > 0)
                         {
                             return result;
@@ -490,11 +492,11 @@ namespace DocumentHealth
                     }
                     catch (InvalidOperationException)
                     {
-                        // May fail if called from wrong thread or during update
+                        // May fail during update
                     }
                 }
 
-                // Fallback: iterate through sources
+                // Fallback: iterate through sources using thread-safe snapshot APIs
                 if (_errorTableManager != null)
                 {
                     foreach (ITableDataSource source in _errorTableManager.Sources)
@@ -1007,29 +1009,31 @@ namespace DocumentHealth
 
         public void Dispose()
         {
-            if (!_isDisposed)
+            lock (_updateGate)
             {
+                if (_isDisposed)
+                {
+                    return;
+                }
+
                 _isDisposed = true;
-                _view.Closed -= OnViewClosed;
-                _view.TextBuffer.Changed -= OnTextBufferChanged;
-
-                // Unsubscribe from error tag changes and dispose aggregator
-                if (_errorTagAggregator != null)
-                {
-                    _errorTagAggregator.BatchedTagsChanged -= OnErrorTagsChanged;
-                    _errorTagAggregator.Dispose();
-                }
-
-                // Unsubscribe from error list changes
-                UnsubscribeFromErrorListChanges();
-
-                lock (_updateGate)
-                {
-                    _debounceCts?.Cancel();
-                    _debounceCts?.Dispose();
-                    _debounceCts = null;
-                }
+                _debounceCts?.Cancel();
+                _debounceCts?.Dispose();
+                _debounceCts = null;
             }
+
+            // Unsubscribe from events after setting disposed flag and cancelling pending work.
+            // Safe outside the lock because _isDisposed prevents new work from being scheduled.
+            _view.Closed -= OnViewClosed;
+            _view.TextBuffer.Changed -= OnTextBufferChanged;
+
+            if (_errorTagAggregator != null)
+            {
+                _errorTagAggregator.BatchedTagsChanged -= OnErrorTagsChanged;
+                _errorTagAggregator.Dispose();
+            }
+
+            UnsubscribeFromErrorListChanges();
         }
     }
 
