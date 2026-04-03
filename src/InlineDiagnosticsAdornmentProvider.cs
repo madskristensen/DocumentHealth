@@ -37,35 +37,12 @@ namespace DocumentHealth
                 return;
             }
 
-            // Get or create the shared DiagnosticDataProvider
-            DiagnosticDataProvider dataProvider = GetOrCreateDataProvider(textView, options);
+            DiagnosticDataProvider dataProvider = DiagnosticDataProvider.GetOrCreate(
+                textView, JoinableTaskContext.Factory, options, TableManagerProvider, ServiceProvider);
 
             textView.Properties.GetOrCreateSingletonProperty(
                 typeof(InlineDiagnosticsAdornment),
                 () => new InlineDiagnosticsAdornment(textView, options, dataProvider));
-        }
-
-        internal DiagnosticDataProvider GetOrCreateDataProvider(IWpfTextView textView, General options)
-        {
-            return textView.Properties.GetOrCreateSingletonProperty(
-                typeof(DiagnosticDataProvider),
-                () =>
-                {
-                    ITableManager errorTableManager = TableManagerProvider.GetTableManager(StandardTables.ErrorsTable);
-
-                    // Get the IErrorList service for direct access to the table control
-                    IErrorList errorList = null;
-                    try
-                    {
-                        errorList = ServiceProvider.GetService(typeof(SVsErrorList)) as IErrorList;
-                    }
-                    catch
-                    {
-                        // Service may not be available
-                    }
-
-                    return new DiagnosticDataProvider(textView, JoinableTaskContext.Factory, options, errorTableManager, errorList);
-                });
         }
     }
 }

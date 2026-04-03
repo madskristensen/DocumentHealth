@@ -82,8 +82,8 @@ namespace DocumentHealth
 
             foreach (ITextChange change in e.Changes)
             {
-                int newlinesBefore = CountNewlines(change.OldText);
-                int newlinesAfter = CountNewlines(change.NewText);
+                int newlinesBefore = DiagnosticDataProvider.CountNewlines(change.OldText);
+                int newlinesAfter = DiagnosticDataProvider.CountNewlines(change.NewText);
 
                 if (newlinesBefore != newlinesAfter)
                 {
@@ -92,30 +92,6 @@ namespace DocumentHealth
                     return;
                 }
             }
-        }
-
-        private static int CountNewlines(string text)
-        {
-            int count = 0;
-
-            for (int i = 0; i < text.Length; i++)
-            {
-                if (text[i] == '\r')
-                {
-                    count++;
-
-                    if (i + 1 < text.Length && text[i + 1] == '\n')
-                    {
-                        i++;
-                    }
-                }
-                else if (text[i] == '\n')
-                {
-                    count++;
-                }
-            }
-
-            return count;
         }
 
         private void OnLayoutChanged(object sender, TextViewLayoutChangedEventArgs e)

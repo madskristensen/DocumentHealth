@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
-using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
@@ -39,33 +38,10 @@ namespace DocumentHealth
                 return null;
             }
 
-            // Get or create the shared DiagnosticDataProvider
-            DiagnosticDataProvider dataProvider = GetOrCreateDataProvider(textView, options);
+            DiagnosticDataProvider dataProvider = DiagnosticDataProvider.GetOrCreate(
+                textView, JoinableTaskContext.Factory, options, TableManagerProvider, ServiceProvider);
 
             return textView.Properties.GetOrCreateSingletonProperty(() => new DiagnosticGlyphTagger(textView, options, dataProvider)) as ITagger<T>;
-        }
-
-        private DiagnosticDataProvider GetOrCreateDataProvider(ITextView textView, General options)
-        {
-            return textView.Properties.GetOrCreateSingletonProperty(
-                typeof(DiagnosticDataProvider),
-                () =>
-                {
-                    ITableManager errorTableManager = TableManagerProvider.GetTableManager(StandardTables.ErrorsTable);
-
-                    // Get the IErrorList service for direct access to the table control
-                    IErrorList errorList = null;
-                    try
-                    {
-                        errorList = ServiceProvider.GetService(typeof(SVsErrorList)) as IErrorList;
-                    }
-                    catch
-                    {
-                        // Service may not be available
-                    }
-
-                    return new DiagnosticDataProvider(textView, JoinableTaskContext.Factory, options, errorTableManager, errorList);
-                });
         }
     }
 
@@ -114,7 +90,7 @@ namespace DocumentHealth
             }
         }
 
-        private async System.Threading.Tasks.Task FireTagsChangedOnUIThreadAsync()
+        private async Task FireTagsChangedOnUIThreadAsync()
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 

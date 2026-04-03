@@ -44,6 +44,36 @@ namespace DocumentHealth
         /// </summary>
         public IReadOnlyDictionary<int, LineDiagnostic> DiagnosticsByLine => _diagnosticsByLine;
 
+        /// <summary>
+        /// Gets or creates a shared DiagnosticDataProvider for the specified text view.
+        /// </summary>
+        public static DiagnosticDataProvider GetOrCreate(
+            ITextView textView,
+            JoinableTaskFactory joinableTaskFactory,
+            General options,
+            ITableManagerProvider tableManagerProvider,
+            SVsServiceProvider serviceProvider)
+        {
+            return textView.Properties.GetOrCreateSingletonProperty(
+                typeof(DiagnosticDataProvider),
+                () =>
+                {
+                    ITableManager errorTableManager = tableManagerProvider.GetTableManager(StandardTables.ErrorsTable);
+
+                    IErrorList errorList = null;
+                    try
+                    {
+                        errorList = serviceProvider.GetService(typeof(SVsErrorList)) as IErrorList;
+                    }
+                    catch
+                    {
+                        // Service may not be available
+                    }
+
+                    return new DiagnosticDataProvider(textView, joinableTaskFactory, options, errorTableManager, errorList);
+                });
+        }
+
         public DiagnosticDataProvider(
             ITextView view,
             JoinableTaskFactory joinableTaskFactory,
@@ -130,7 +160,10 @@ namespace DocumentHealth
             }
         }
 
-        private static int CountNewlines(string text)
+        /// <summary>
+        /// Counts the number of newline sequences in a string.
+        /// </summary>
+        internal static int CountNewlines(string text)
         {
             int count = 0;
 
