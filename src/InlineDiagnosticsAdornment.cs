@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -8,6 +9,10 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.VisualStudio.Imaging;
 using Microsoft.VisualStudio.Imaging.Interop;
+using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Shell.Interop;
+using Microsoft.VisualStudio.Shell.TableControl;
+using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Adornments;
 using Microsoft.VisualStudio.Text.Editor;
@@ -27,6 +32,8 @@ namespace DocumentHealth
         private readonly ITagAggregator<IErrorTag> _aggregator;
         private readonly JoinableTaskFactory _joinableTaskFactory;
         private readonly General _options;
+        private readonly ITableManager _errorTableManager;
+        private readonly IErrorList _errorList;
 
         private static readonly Brush _errorBackground;
         private static readonly Brush _warningBackground;
@@ -41,6 +48,10 @@ namespace DocumentHealth
 
         // Cached diagnostic data per line number
         private Dictionary<int, LineDiagnostic> _diagnosticsByLine = new Dictionary<int, LineDiagnostic>();
+
+        // Tracks whether we have diagnostics that need error list data (missing tooltip text)
+        private volatile bool _hasPendingErrorListLookups;
+        private volatile bool _isSubscribedToErrorList;
 
         static InlineDiagnosticsAdornment()
         {
@@ -63,13 +74,17 @@ namespace DocumentHealth
             IWpfTextView view,
             ITagAggregator<IErrorTag> aggregator,
             JoinableTaskFactory joinableTaskFactory,
-            General options)
+            General options,
+            ITableManager errorTableManager,
+            IErrorList errorList)
         {
             _view = view;
             _layer = view.GetAdornmentLayer(InlineDiagnosticsAdornmentProvider.AdornmentLayerName);
             _aggregator = aggregator;
             _joinableTaskFactory = joinableTaskFactory;
             _options = options;
+            _errorTableManager = errorTableManager;
+            _errorList = errorList;
 
             _view.LayoutChanged += OnLayoutChanged;
             _view.Closed += OnViewClosed;
@@ -81,6 +96,48 @@ namespace DocumentHealth
 
         private void OnBatchedTagsChanged(object sender, BatchedTagsChangedEventArgs e)
         {
+            ScheduleUpdate();
+        }
+
+        /// <summary>
+        /// Subscribes to error list changes when we have tags without tooltip text.
+        /// </summary>
+        private void SubscribeToErrorListChanges()
+        {
+            if (_isSubscribedToErrorList || _errorList?.TableControl == null)
+            {
+                return;
+            }
+
+            _isSubscribedToErrorList = true;
+            _errorList.TableControl.EntriesChanged += OnErrorListEntriesChanged;
+        }
+
+        /// <summary>
+        /// Unsubscribes from error list changes.
+        /// </summary>
+        private void UnsubscribeFromErrorListChanges()
+        {
+            if (!_isSubscribedToErrorList || _errorList?.TableControl == null)
+            {
+                return;
+            }
+
+            _isSubscribedToErrorList = false;
+            _errorList.TableControl.EntriesChanged -= OnErrorListEntriesChanged;
+        }
+
+        /// <summary>
+        /// Called when error list entries change. Schedules an update if we have pending lookups.
+        /// </summary>
+        private void OnErrorListEntriesChanged(object sender, EntriesChangedEventArgs e)
+        {
+            if (_isDisposed || !_hasPendingErrorListLookups)
+            {
+                return;
+            }
+
+            // Schedule an update to re-fetch messages from the now-populated error list
             ScheduleUpdate();
         }
 
@@ -170,8 +227,20 @@ namespace DocumentHealth
 
                 token.ThrowIfCancellationRequested();
 
-                Dictionary<int, LineDiagnostic> diagnostics = await System.Threading.Tasks.Task.Run(
-                    () => CollectDiagnostics(token), token).ConfigureAwait(false);
+                // Switch to UI thread to build error list cache (IWpfTableControl.Entries requires UI thread)
+                await _joinableTaskFactory.SwitchToMainThreadAsync(token);
+
+                if (_isDisposed || token.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                // Build error list cache on UI thread
+                Dictionary<ErrorListKey, string> errorListCache = BuildErrorListCache();
+
+                // Now run diagnostic collection on background thread with the cache
+                var collectResult = await System.Threading.Tasks.Task.Run(
+                    () => CollectDiagnostics(token, errorListCache), token).ConfigureAwait(false);
 
                 await _joinableTaskFactory.SwitchToMainThreadAsync(token);
 
@@ -180,7 +249,19 @@ namespace DocumentHealth
                     return;
                 }
 
-                _diagnosticsByLine = diagnostics;
+                _diagnosticsByLine = collectResult.Diagnostics;
+                _hasPendingErrorListLookups = collectResult.HasPendingErrorListLookups;
+
+                // Subscribe to error list changes if we have pending lookups
+                if (_hasPendingErrorListLookups)
+                {
+                    SubscribeToErrorListChanges();
+                }
+                else
+                {
+                    UnsubscribeFromErrorListChanges();
+                }
+
                 RenderAdornments();
             }
             catch (OperationCanceledException)
@@ -193,14 +274,18 @@ namespace DocumentHealth
             }
         }
 
-        private Dictionary<int, LineDiagnostic> CollectDiagnostics(CancellationToken token)
+        private (Dictionary<int, LineDiagnostic> Diagnostics, bool HasPendingErrorListLookups) CollectDiagnostics(CancellationToken token, Dictionary<ErrorListKey, string> errorListCache)
         {
             var result = new Dictionary<int, LineDiagnostic>();
+            bool hasPendingLookups = false;
 
             try
             {
                 ITextSnapshot snapshot = _view.TextSnapshot;
                 SnapshotSpan fullSpan = new SnapshotSpan(snapshot, 0, snapshot.Length);
+
+                // Get the document path for error list lookup
+                string documentPath = GetDocumentPath();
 
                 foreach (IMappingTagSpan<IErrorTag> tagSpan in _aggregator.GetTags(fullSpan))
                 {
@@ -222,15 +307,30 @@ namespace DocumentHealth
                     }
 
                     string message = ExtractTooltipText(tagSpan.Tag.ToolTipContent);
+                    bool neededErrorListLookup = false;
 
                     if (string.IsNullOrWhiteSpace(message))
                     {
                         message = ExtractDescriptionViaReflection(tagSpan.Tag);
                     }
 
+                    // Fallback to querying the Error List cache for the message
                     if (string.IsNullOrWhiteSpace(message))
                     {
-                        message = GetFallbackMessage(severity);
+                        neededErrorListLookup = true;
+                        message = GetMessageFromErrorListCache(errorListCache, documentPath, lineNumber, severity);
+                    }
+
+                    // If we still don't have a message and needed error list lookup,
+                    // mark as pending and skip this diagnostic (don't show fallback)
+                    if (string.IsNullOrWhiteSpace(message))
+                    {
+                        if (neededErrorListLookup)
+                        {
+                            hasPendingLookups = true;
+                        }
+
+                        continue;
                     }
 
                     // Try to extract and strip the diagnostic code prefix from the message
@@ -271,7 +371,7 @@ namespace DocumentHealth
             catch (ObjectDisposedException) { }
             catch (InvalidOperationException) { }
 
-            return result;
+            return (result, hasPendingLookups);
         }
 
         private void RenderAdornments()
@@ -578,19 +678,6 @@ namespace DocumentHealth
             }
         }
 
-        private static string GetFallbackMessage(DiagnosticSeverity severity)
-        {
-            switch (severity)
-            {
-                case DiagnosticSeverity.Error:
-                    return "Error";
-                case DiagnosticSeverity.Warning:
-                    return "Warning";
-                default:
-                    return "Message";
-            }
-        }
-
         private static Brush GetBackgroundBrush(DiagnosticSeverity severity)
         {
             switch (severity)
@@ -611,6 +698,278 @@ namespace DocumentHealth
             }
         }
 
+        /// <summary>
+        /// Gets the document path for the current text view from the ITextDocument property.
+        /// </summary>
+        private string GetDocumentPath()
+        {
+            try
+            {
+                if (_view.TextBuffer.Properties.TryGetProperty(typeof(Microsoft.VisualStudio.Text.ITextDocument), out Microsoft.VisualStudio.Text.ITextDocument document))
+                {
+                    return document.FilePath;
+                }
+            }
+            catch
+            {
+                // Property access may fail in some edge cases
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Builds a cache of error list entries for the current document.
+        /// Must be called on the UI thread.
+        /// </summary>
+        private Dictionary<ErrorListKey, string> BuildErrorListCache()
+        {
+            var cache = new Dictionary<ErrorListKey, string>();
+
+            try
+            {
+                string documentPath = GetDocumentPath();
+
+                if (string.IsNullOrEmpty(documentPath))
+                {
+                    return cache;
+                }
+
+                // Prefer IErrorList.TableControl.Entries for direct access (requires UI thread)
+                if (_errorList?.TableControl != null)
+                {
+                    try
+                    {
+                        foreach (ITableEntryHandle entry in _errorList.TableControl.Entries)
+                        {
+                            AddEntryToCache(cache, entry, documentPath);
+                        }
+
+                        // If we got entries from the table control, we're done
+                        if (cache.Count > 0)
+                        {
+                            return cache;
+                        }
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // May fail if called from wrong thread or during update
+                    }
+                }
+
+                // Fallback: iterate through sources (may not always work due to async subscription)
+                if (_errorTableManager != null)
+                {
+                    foreach (ITableDataSource source in _errorTableManager.Sources)
+                    {
+                        try
+                        {
+                            var collector = new SnapshotFactoryCollector();
+                            IDisposable subscription = source.Subscribe(collector);
+
+                            try
+                            {
+                                foreach (ITableEntriesSnapshotFactory factory in collector.Factories.ToArray())
+                                {
+                                    ITableEntriesSnapshot snapshot = factory.GetCurrentSnapshot();
+
+                                    if (snapshot == null)
+                                    {
+                                        continue;
+                                    }
+
+                                    AddSnapshotEntriesToCache(cache, snapshot, documentPath);
+                                }
+                            }
+                            finally
+                            {
+                                subscription?.Dispose();
+                            }
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            // Source was disposed
+                        }
+                    }
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                // Table manager was disposed
+            }
+            catch (InvalidOperationException)
+            {
+                // Collection was modified during enumeration
+            }
+
+            return cache;
+        }
+
+        /// <summary>
+        /// Adds a single entry (ITableEntryHandle) to the cache if it matches the document path.
+        /// </summary>
+        private static void AddEntryToCache(Dictionary<ErrorListKey, string> cache, ITableEntryHandle entry, string documentPath)
+        {
+            try
+            {
+                // Get the document name for this entry
+                if (!entry.TryGetValue(StandardTableKeyNames.DocumentName, out object docNameObj) ||
+                    !(docNameObj is string entryDocPath))
+                {
+                    return;
+                }
+
+                // Compare document paths (case-insensitive on Windows)
+                if (!string.Equals(entryDocPath, documentPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                // Get the line number (0-based in the Error List API)
+                if (!entry.TryGetValue(StandardTableKeyNames.Line, out object lineObj) ||
+                    !(lineObj is int lineNumber))
+                {
+                    return;
+                }
+
+                // Get the severity
+                DiagnosticSeverity severity = DiagnosticSeverity.Message;
+                if (entry.TryGetValue(StandardTableKeyNames.ErrorSeverity, out object severityObj) &&
+                    severityObj is __VSERRORCATEGORY category)
+                {
+                    switch (category)
+                    {
+                        case __VSERRORCATEGORY.EC_ERROR:
+                            severity = DiagnosticSeverity.Error;
+                            break;
+                        case __VSERRORCATEGORY.EC_WARNING:
+                            severity = DiagnosticSeverity.Warning;
+                            break;
+                        case __VSERRORCATEGORY.EC_MESSAGE:
+                            severity = DiagnosticSeverity.Message;
+                            break;
+                    }
+                }
+
+                // Get the message text
+                if (entry.TryGetValue(StandardTableKeyNames.Text, out object textObj) &&
+                    textObj is string message &&
+                    !string.IsNullOrWhiteSpace(message))
+                {
+                    var key = new ErrorListKey(documentPath, lineNumber, severity);
+
+                    // Only add if not already present (first entry wins)
+                    if (!cache.ContainsKey(key))
+                    {
+                        cache[key] = message;
+                    }
+                }
+            }
+            catch
+            {
+                // Entry access failed
+            }
+        }
+
+        /// <summary>
+        /// Adds entries from a snapshot to the cache for matching document path.
+        /// </summary>
+        private static void AddSnapshotEntriesToCache(Dictionary<ErrorListKey, string> cache, ITableEntriesSnapshot snapshot, string documentPath)
+        {
+            try
+            {
+                int count = snapshot.Count;
+
+                for (int i = 0; i < count; i++)
+                {
+                    // Get the document name for this entry
+                    if (!snapshot.TryGetValue(i, StandardTableKeyNames.DocumentName, out object docNameObj) ||
+                        !(docNameObj is string entryDocPath))
+                    {
+                        continue;
+                    }
+
+                    // Compare document paths (case-insensitive on Windows)
+                    if (!string.Equals(entryDocPath, documentPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    // Get the line number (0-based in the Error List API)
+                    if (!snapshot.TryGetValue(i, StandardTableKeyNames.Line, out object lineObj) ||
+                        !(lineObj is int lineNumber))
+                    {
+                        continue;
+                    }
+
+                    // Get the severity
+                    DiagnosticSeverity severity = GetSeverityFromErrorListEntry(snapshot, i);
+
+                    // Get the message text
+                    if (snapshot.TryGetValue(i, StandardTableKeyNames.Text, out object textObj) &&
+                        textObj is string message &&
+                        !string.IsNullOrWhiteSpace(message))
+                    {
+                        var key = new ErrorListKey(documentPath, lineNumber, severity);
+
+                        // Only add if not already present (first entry wins)
+                        if (!cache.ContainsKey(key))
+                        {
+                            cache[key] = message;
+                        }
+                    }
+                }
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // Snapshot count changed during iteration
+            }
+        }
+
+        /// <summary>
+        /// Gets a message from the pre-built error list cache.
+        /// Thread-safe - can be called from any thread.
+        /// </summary>
+        private static string GetMessageFromErrorListCache(
+            Dictionary<ErrorListKey, string> cache,
+            string documentPath,
+            int lineNumber,
+            DiagnosticSeverity severity)
+        {
+            if (cache == null || string.IsNullOrEmpty(documentPath))
+            {
+                return null;
+            }
+
+            var key = new ErrorListKey(documentPath, lineNumber, severity);
+
+            return cache.TryGetValue(key, out string message) ? message : null;
+        }
+
+        /// <summary>
+        /// Gets the severity from an Error List entry.
+        /// </summary>
+        private static DiagnosticSeverity GetSeverityFromErrorListEntry(ITableEntriesSnapshot snapshot, int index)
+        {
+            if (snapshot.TryGetValue(index, StandardTableKeyNames.ErrorSeverity, out object severityObj))
+            {
+                if (severityObj is __VSERRORCATEGORY category)
+                {
+                    switch (category)
+                    {
+                        case __VSERRORCATEGORY.EC_ERROR:
+                            return DiagnosticSeverity.Error;
+                        case __VSERRORCATEGORY.EC_WARNING:
+                            return DiagnosticSeverity.Warning;
+                        case __VSERRORCATEGORY.EC_MESSAGE:
+                            return DiagnosticSeverity.Message;
+                    }
+                }
+            }
+
+            return DiagnosticSeverity.Message;
+        }
+
         private void OnViewClosed(object sender, EventArgs e)
         {
             if (!_isDisposed)
@@ -620,6 +979,9 @@ namespace DocumentHealth
                 _view.Closed -= OnViewClosed;
                 _view.TextBuffer.Changed -= OnTextBufferChanged;
                 _aggregator.BatchedTagsChanged -= OnBatchedTagsChanged;
+
+                // Unsubscribe from error list changes
+                UnsubscribeFromErrorListChanges();
 
                 lock (_updateGate)
                 {
@@ -647,5 +1009,176 @@ namespace DocumentHealth
         public string DiagnosticCode { get; set; }
         public string Source { get; set; }
         public int Count { get; set; }
+    }
+
+    /// <summary>
+    /// A key for the error list cache, combining document path, line number, and severity.
+    /// </summary>
+    internal readonly struct ErrorListKey : IEquatable<ErrorListKey>
+    {
+        public string DocumentPath { get; }
+        public int LineNumber { get; }
+        public DiagnosticSeverity Severity { get; }
+
+        public ErrorListKey(string documentPath, int lineNumber, DiagnosticSeverity severity)
+        {
+            // Normalize the document path for consistent comparison
+            DocumentPath = documentPath?.ToUpperInvariant() ?? string.Empty;
+            LineNumber = lineNumber;
+            Severity = severity;
+        }
+
+        public bool Equals(ErrorListKey other)
+        {
+            return LineNumber == other.LineNumber &&
+                   Severity == other.Severity &&
+                   string.Equals(DocumentPath, other.DocumentPath, StringComparison.Ordinal);
+        }
+
+        public override bool Equals(object obj)
+        {
+            return obj is ErrorListKey other && Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                int hash = 17;
+                hash = hash * 31 + (DocumentPath?.GetHashCode() ?? 0);
+                hash = hash * 31 + LineNumber;
+                hash = hash * 31 + (int)Severity;
+                return hash;
+            }
+        }
+    }
+
+    /// <summary>
+    /// A lightweight ITableDataSink implementation used to collect snapshot factories from an ITableDataSource.
+    /// This is thread-safe and designed for temporary subscription to gather current data.
+    /// </summary>
+    internal sealed class SnapshotFactoryCollector : ITableDataSink
+    {
+        private readonly List<ITableEntriesSnapshotFactory> _factories = new List<ITableEntriesSnapshotFactory>();
+        private readonly object _lock = new object();
+
+        public IReadOnlyList<ITableEntriesSnapshotFactory> Factories
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _factories.ToArray();
+                }
+            }
+        }
+
+        public bool IsStable { get; set; } = true;
+
+        public void AddEntries(IReadOnlyList<ITableEntry> newEntries, bool removeAllEntries = false)
+        {
+            // Not used for snapshot collection
+        }
+
+        public void AddFactory(ITableEntriesSnapshotFactory newFactory, bool removeAllFactories = false)
+        {
+            if (newFactory == null)
+            {
+                return;
+            }
+
+            lock (_lock)
+            {
+                if (removeAllFactories)
+                {
+                    _factories.Clear();
+                }
+
+                _factories.Add(newFactory);
+            }
+        }
+
+        public void AddSnapshot(ITableEntriesSnapshot newSnapshot, bool removeAllSnapshots = false)
+        {
+            // Not used for snapshot collection
+        }
+
+        public void FactorySnapshotChanged(ITableEntriesSnapshotFactory factory)
+        {
+            // Not used for snapshot collection
+        }
+
+        public void RemoveAllEntries()
+        {
+            // Not used for snapshot collection
+        }
+
+        public void RemoveAllFactories()
+        {
+            lock (_lock)
+            {
+                _factories.Clear();
+            }
+        }
+
+        public void RemoveAllSnapshots()
+        {
+            // Not used for snapshot collection
+        }
+
+        public void RemoveEntries(IReadOnlyList<ITableEntry> oldEntries)
+        {
+            // Not used for snapshot collection
+        }
+
+        public void RemoveFactory(ITableEntriesSnapshotFactory oldFactory)
+        {
+            if (oldFactory == null)
+            {
+                return;
+            }
+
+            lock (_lock)
+            {
+                _factories.Remove(oldFactory);
+            }
+        }
+
+        public void RemoveSnapshot(ITableEntriesSnapshot oldSnapshot)
+        {
+            // Not used for snapshot collection
+        }
+
+        public void ReplaceEntries(IReadOnlyList<ITableEntry> oldEntries, IReadOnlyList<ITableEntry> newEntries)
+        {
+            // Not used for snapshot collection
+        }
+
+        public void ReplaceFactory(ITableEntriesSnapshotFactory oldFactory, ITableEntriesSnapshotFactory newFactory)
+        {
+            if (oldFactory == null || newFactory == null)
+            {
+                return;
+            }
+
+            lock (_lock)
+            {
+                int index = _factories.IndexOf(oldFactory);
+
+                if (index >= 0)
+                {
+                    _factories[index] = newFactory;
+                }
+                else
+                {
+                    _factories.Add(newFactory);
+                }
+            }
+        }
+
+        public void ReplaceSnapshot(ITableEntriesSnapshot oldSnapshot, ITableEntriesSnapshot newSnapshot)
+        {
+            // Not used for snapshot collection
+        }
     }
 }

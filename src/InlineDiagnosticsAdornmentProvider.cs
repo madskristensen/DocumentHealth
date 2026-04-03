@@ -1,4 +1,8 @@
+using System;
 using System.ComponentModel.Composition;
+using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Shell.Interop;
+using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Threading;
@@ -24,6 +28,12 @@ namespace DocumentHealth
         [Import]
         internal JoinableTaskContext JoinableTaskContext = null;
 
+        [Import]
+        internal ITableManagerProvider TableManagerProvider = null;
+
+        [Import]
+        internal SVsServiceProvider ServiceProvider = null;
+
         public void TextViewCreated(IWpfTextView textView)
         {
             General options = General.Instance;
@@ -37,8 +47,21 @@ namespace DocumentHealth
                 textView,
                 (TagAggregatorOptions)TagAggregatorOptions2.DeferTaggerCreation);
 
+            ITableManager errorTableManager = TableManagerProvider.GetTableManager(StandardTables.ErrorsTable);
+
+            // Get the IErrorList service for direct access to the table control
+            IErrorList errorList = null;
+            try
+            {
+                errorList = ServiceProvider.GetService(typeof(SVsErrorList)) as IErrorList;
+            }
+            catch
+            {
+                // Service may not be available
+            }
+
             textView.Properties.GetOrCreateSingletonProperty(
-                () => new InlineDiagnosticsAdornment(textView, aggregator, JoinableTaskContext.Factory, options));
+                () => new InlineDiagnosticsAdornment(textView, aggregator, JoinableTaskContext.Factory, options, errorTableManager, errorList));
         }
     }
 }
