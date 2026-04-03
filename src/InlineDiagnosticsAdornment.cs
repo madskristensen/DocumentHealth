@@ -22,6 +22,7 @@ namespace DocumentHealth
         private readonly IAdornmentLayer _layer;
         private readonly General _options;
         private readonly DiagnosticDataProvider _dataProvider;
+        private readonly ITextDocument _textDocument;
 
         private static readonly Brush _errorBackground;
         private static readonly Brush _warningBackground;
@@ -32,6 +33,12 @@ namespace DocumentHealth
 
         private volatile bool _isDisposed;
         private readonly List<TextBlock> _inlineMessageAdornments = new List<TextBlock>();
+
+        /// <summary>
+        /// Tracks whether a diagnostic refresh is pending. Initialized to true so that
+        /// the first diagnostic update after a file is opened is rendered even in OnSave mode.
+        /// </summary>
+        private volatile bool _pendingSaveRender = true;
 
         static InlineDiagnosticsAdornment()
         {
@@ -53,12 +60,14 @@ namespace DocumentHealth
         public InlineDiagnosticsAdornment(
             IWpfTextView view,
             General options,
-            DiagnosticDataProvider dataProvider)
+            DiagnosticDataProvider dataProvider,
+            ITextDocument textDocument)
         {
             _view = view;
             _layer = view.GetAdornmentLayer(InlineDiagnosticsAdornmentProvider.AdornmentLayerName);
             _options = options;
             _dataProvider = dataProvider;
+            _textDocument = textDocument;
 
             _view.LayoutChanged += OnLayoutChanged;
             _view.Closed += OnViewClosed;
@@ -66,12 +75,36 @@ namespace DocumentHealth
             _view.VisualElement.LayoutUpdated += OnVisualLayoutUpdated;
             _dataProvider.DiagnosticsUpdated += OnDiagnosticsUpdated;
 
+            if (_textDocument != null)
+            {
+                _textDocument.FileActionOccurred += OnFileActionOccurred;
+            }
+
             // Initial render
             RenderAdornments();
         }
 
+        private void OnFileActionOccurred(object sender, TextDocumentFileActionEventArgs e)
+        {
+            if (e.FileActionType == FileActionTypes.ContentSavedToDisk)
+            {
+                _pendingSaveRender = true;
+                RenderAdornments();
+            }
+        }
+
         private void OnDiagnosticsUpdated(object sender, EventArgs e)
         {
+            if (_options.UpdateMode == UpdateMode.OnSave)
+            {
+                if (!_pendingSaveRender)
+                {
+                    return;
+                }
+
+                _pendingSaveRender = false;
+            }
+
             RenderAdornments();
         }
 
@@ -79,6 +112,15 @@ namespace DocumentHealth
         {
             if (_isDisposed || _dataProvider.DiagnosticsByLine.Count == 0)
             {
+                return;
+            }
+
+            // In on-save mode, clear adornments immediately when any edit occurs
+            // so stale diagnostics don't remain at wrong positions
+            if (_options.UpdateMode == UpdateMode.OnSave)
+            {
+                _layer.RemoveAllAdornments();
+                _inlineMessageAdornments.Clear();
                 return;
             }
 
@@ -447,6 +489,11 @@ namespace DocumentHealth
                 _view.TextBuffer.Changed -= OnTextBufferChanged;
                 _view.VisualElement.LayoutUpdated -= OnVisualLayoutUpdated;
                 _dataProvider.DiagnosticsUpdated -= OnDiagnosticsUpdated;
+
+                if (_textDocument != null)
+                {
+                    _textDocument.FileActionOccurred -= OnFileActionOccurred;
+                }
             }
         }
     }

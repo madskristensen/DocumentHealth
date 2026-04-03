@@ -23,6 +23,12 @@ namespace DocumentHealth
         public bool ReplaceBuiltInIndicator { get; set; } = true;
 
         [Category("Inline Diagnostics")]
+        [DisplayName("Update mode")]
+        [Description("Controls when inline diagnostics are refreshed. 'Continuous' updates as you type (default). 'OnSave' only updates after the file is saved.")]
+        [DefaultValue(UpdateMode.Continuous)]
+        public UpdateMode UpdateMode { get; set; } = UpdateMode.Continuous;
+
+        [Category("Inline Diagnostics")]
         [DisplayName("Show inline messages")]
         [Description("Display diagnostic messages inline at the end of lines containing errors or warnings.")]
         [DefaultValue(true)]
@@ -74,5 +80,11 @@ namespace DocumentHealth
         Errors,
         ErrorsAndWarnings,
         All,
+    }
+
+    public enum UpdateMode
+    {
+        Continuous,
+        OnSave,
     }
 }

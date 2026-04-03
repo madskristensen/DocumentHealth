@@ -1,6 +1,7 @@
 using System.ComponentModel.Composition;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Shell.TableManager;
+using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Threading;
@@ -32,6 +33,9 @@ namespace DocumentHealth
         [Import]
         internal IViewTagAggregatorFactoryService ViewTagAggregatorFactoryService = null;
 
+        [Import]
+        internal ITextDocumentFactoryService TextDocumentFactoryService = null;
+
         public void TextViewCreated(IWpfTextView textView)
         {
             General options = General.Instance;
@@ -44,9 +48,11 @@ namespace DocumentHealth
             DiagnosticDataProvider dataProvider = DiagnosticDataProvider.GetOrCreate(
                 textView, JoinableTaskContext.Factory, options, TableManagerProvider, ServiceProvider, ViewTagAggregatorFactoryService);
 
+            TextDocumentFactoryService.TryGetTextDocument(textView.TextBuffer, out ITextDocument textDocument);
+
             textView.Properties.GetOrCreateSingletonProperty(
                 typeof(InlineDiagnosticsAdornment),
-                () => new InlineDiagnosticsAdornment(textView, options, dataProvider));
+                () => new InlineDiagnosticsAdornment(textView, options, dataProvider, textDocument));
         }
     }
 }
