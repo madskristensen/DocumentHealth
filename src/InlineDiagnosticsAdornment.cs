@@ -213,7 +213,15 @@ namespace DocumentHealth
                     return;
                 }
 
-                _pendingSaveRender = false;
+                // Don't consume the flag when diagnostics are empty.
+                // For C# files, the initial update fires before Roslyn has
+                // finished analyzing, so the first DiagnosticsUpdated arrives
+                // with an empty set.  Keep the flag so the next update (once
+                // Roslyn produces tags) still renders.
+                if (_dataProvider.DiagnosticsByLine.Count > 0)
+                {
+                    _pendingSaveRender = false;
+                }
             }
 
             RenderAdornments();
