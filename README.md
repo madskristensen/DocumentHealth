@@ -1,6 +1,6 @@
-[marketplace]: https://marketplace.visualstudio.com/items?itemName=MadsKristensen.DocumentHealth
-[vsixgallery]: http://vsixgallery.com/extension/DocumentHealth.ebd2f3af-c274-4af6-bc9d-3e929361845d/
-[repo]: https://github.com/madskristensen/DocumentHealth
+[marketplace]: <https://marketplace.visualstudio.com/items?itemName=MadsKristensen.DocumentHealth>
+[vsixgallery]: <http://vsixgallery.com/extension/DocumentHealth.ebd2f3af-c274-4af6-bc9d-3e929361845d/>
+[repo]: <https://github.com/madskristensen/DocumentHealth>
 
 # Document Health for Visual Studio
 
@@ -55,6 +55,7 @@ You can also **click the icon** to jump to the next error, or **right-click** to
 
 - Go to Next/Previous Error
 - Open Error List
+- Display toggles (see below)
 - Settings
 
 ### Inline Diagnostics
@@ -68,6 +69,7 @@ Right-click on any inline diagnostic message to access a context menu with usefu
 - **Copy Diagnostic Message** — Copy the diagnostic text to the clipboard
 - **Copy Diagnostic Code** — Copy the diagnostic code (e.g., CS0168) to the clipboard
 - **Search Online** — Search for the diagnostic on Bing to find solutions
+- **Display** — Quick toggles for display options (see below)
 
 #### Message Templates
 
@@ -75,20 +77,20 @@ Customize the format of inline diagnostic messages using a template string. The 
 
 Supported placeholders:
 
-| Placeholder | Description | Example |
-|-------------|-------------|---------|
-| `{message}` | The diagnostic message text | The variable 'x' is declared but never used |
-| `{code}` | The diagnostic code | CS0168 |
-| `{severity}` | The severity level | Error, Warning, Info |
-| `{source}` | The analyzer/source name | — |
+| Placeholder  | Description                 | Example                                     |
+| ------------ | --------------------------- | ------------------------------------------- |
+| `{message}`  | The diagnostic message text | The variable 'x' is declared but never used |
+| `{code}`     | The diagnostic code         | CS0168                                      |
+| `{severity}` | The severity level          | Error, Warning, Info                        |
+| `{source}`   | The analyzer/source name    | —                                           |
 
 Example templates:
 
-| Template | Result |
-|----------|--------|
-| `{message}` | The variable 'x' is declared but never used |
-| `{code}: {message}` | CS0168: The variable 'x' is declared but never used |
-| `[{severity}] {message}` | [Warning] The variable 'x' is declared but never used |
+| Template                       | Result                                                      |
+| ------------------------------ | ----------------------------------------------------------- |
+| `{message}`                    | The variable 'x' is declared but never used                 |
+| `{code}: {message}`            | CS0168: The variable 'x' is declared but never used         |
+| `[{severity}] {message}`       | [Warning] The variable 'x' is declared but never used       |
 | `{severity} {code}: {message}` | Warning CS0168: The variable 'x' is declared but never used |
 
 ### Gutter Icons
@@ -99,7 +101,7 @@ Diagnostic icons appear in the editor gutter (left margin) for lines containing 
 - 🟡 Warning icon for warnings
 - ℹ️ Information icon for suggestions
 
-Right-click on any gutter icon to access the same context menu as inline diagnostics (copy message, copy code, search online).
+Right-click on any gutter icon to access the same context menu as inline diagnostics (copy message, copy code, search online, display toggles).
 
 You can configure which severity levels show gutter icons in the options.
 
@@ -113,15 +115,26 @@ Lines with errors or warnings are highlighted with a subtle background tint colo
 
 Both features can be toggled independently in the options.
 
+### Quick Display Toggles
+
+All context menus (inline diagnostics, gutter icons, and the scroll bar indicator) include a **Display** submenu for quickly toggling display options without opening Tools → Options:
+
+- **Inline Messages** — Show/hide inline diagnostic text
+- **Highlight Lines** — Enable/disable line background highlighting
+- **Errors / Warnings / Suggestions** — Toggle which severity levels are displayed
+- **Gutter Icons** — Show/hide gutter margin icons
+
+Changes take effect immediately.
+
 ### Customizable Colors
 
 All diagnostic colors can be customized through Visual Studio's native **Tools → Options → Environment → Fonts and Colors** page. Look for the **Document Health** items:
 
-| Display Item | Foreground (inline text) | Background (line highlight) | Default Color |
-|---|---|---|---|
-| Document Health - Error | Inline error message color | Error line highlight | Red (`#E45454`) |
-| Document Health - Warning | Inline warning message color | Warning line highlight | Orange (`#FF942F`) |
-| Document Health - Message | Inline info message color | Info line highlight | Blue (`#00B7E4`) |
+| Display Item              | Foreground (inline text)     | Background (line highlight) | Default Color      |
+| ------------------------- | ---------------------------- | --------------------------- | ------------------ |
+| Document Health - Error   | Inline error message color   | Error line highlight        | Red (`#E45454`)    |
+| Document Health - Warning | Inline warning message color | Warning line highlight      | Orange (`#FF942F`) |
+| Document Health - Message | Inline info message color    | Info line highlight         | Blue (`#00B7E4`)   |
 
 Each entry also exposes **Bold** and **Italic** options for the inline message font style. Colors update live when changed — no restart required.
 
@@ -131,23 +144,23 @@ Configure the extension under **Tools → Options → Environment → Document H
 
 ### Behavior
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| Update delay (ms) | Delay before updating the indicator after changes. Higher values improve performance during rapid typing. | 250 |
-| Show messages count | Include suggestions and informational messages in the tooltip count. | true |
-| Replace built-in indicator | Disable Visual Studio's built-in file health indicator and use this extension's indicator instead. | true |
+| Option                     | Description                                                                                               | Default |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
+| Update delay (ms)          | Delay before updating the indicator after changes. Higher values improve performance during rapid typing. | 250     |
+| Show messages count        | Include suggestions and informational messages in the tooltip count.                                      | true    |
+| Replace built-in indicator | Disable Visual Studio's built-in file health indicator and use this extension's indicator instead.        | true    |
 
 ### Inline Diagnostics
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| Show inline messages | Display diagnostic messages inline at the end of lines containing errors or warnings. | true |
-| Show gutter icons | Controls which severity levels get gutter icons in the editor margin. Options: None, Errors, Errors and Warnings, All. | Errors and Warnings |
-| Show errors | Include error diagnostics in the inline messages and line highlights. | true |
-| Show warnings | Include warning diagnostics in the inline messages and line highlights. | true |
-| Show suggestions | Include informational and suggestion diagnostics in the inline messages and line highlights. | false |
-| Highlight lines | Controls which severity levels get line background highlighting. Options: None, Errors, Errors and Warnings, All. | Errors and Warnings |
-| Message template | Customize the format of inline messages using placeholders: `{message}`, `{code}`, `{severity}`, `{source}`. | `{message}` |
+| Option               | Description                                                                                                            | Default             |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| Show inline messages | Display diagnostic messages inline at the end of lines containing errors or warnings.                                  | true                |
+| Show gutter icons    | Controls which severity levels get gutter icons in the editor margin. Options: None, Errors, Errors and Warnings, All. | Errors and Warnings |
+| Show errors          | Include error diagnostics in the inline messages and line highlights.                                                  | true                |
+| Show warnings        | Include warning diagnostics in the inline messages and line highlights.                                                | true                |
+| Show suggestions     | Include informational and suggestion diagnostics in the inline messages and line highlights.                           | false               |
+| Highlight lines      | Controls which severity levels get line background highlighting. Options: None, Errors, Errors and Warnings, All.      | Errors and Warnings |
+| Message template     | Customize the format of inline messages using placeholders: `{message}`, `{code}`, `{severity}`, `{source}`.           | `{message}`         |
 
 ### Notes on behavior
 

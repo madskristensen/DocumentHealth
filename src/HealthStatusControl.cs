@@ -186,6 +186,8 @@ namespace DocumentHealth
             menu.Items.Add(new Separator());
             menu.Items.Add(CreateMenuItem("Open Error List", KnownMonikers.TaskList, "View.ErrorList"));
             menu.Items.Add(new Separator());
+            DiagnosticContextMenu.AddDisplayToggleSubmenu(menu);
+            menu.Items.Add(new Separator());
             menu.Items.Add(CreateSettingsMenuItem());
 
             ThemedContextMenuHelper.ApplyVsTheme(menu);

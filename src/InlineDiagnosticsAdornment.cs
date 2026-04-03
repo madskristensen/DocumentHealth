@@ -4,6 +4,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using Microsoft.VisualStudio.PlatformUI;
 using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Classification;
@@ -88,6 +89,18 @@ namespace DocumentHealth
             {
                 _textDocument.FileActionOccurred += OnFileActionOccurred;
             }
+
+            General.Saved += OnOptionsSaved;
+        }
+
+        private void OnOptionsSaved(General options)
+        {
+            if (_isDisposed || _view.IsClosed)
+            {
+                return;
+            }
+
+            RenderAdornments();
         }
 
         /// <summary>
@@ -340,6 +353,7 @@ namespace DocumentHealth
                 IsHitTestVisible = true,
                 Tag = diagnostic,
                 Cursor = System.Windows.Input.Cursors.Arrow,
+                ToolTip = BuildDiagnosticToolTip(diagnostic),
             };
 
             ContextMenu contextMenu = null;
@@ -463,6 +477,74 @@ namespace DocumentHealth
                 case DiagnosticSeverity.Warning: return _warningFontStyle;
                 default: return _messageFontStyle;
             }
+        }
+
+        /// <summary>
+        /// Builds a formatted WPF ToolTip showing all diagnostic entries on a line.
+        /// Error codes are displayed in bold, with blank lines separating multiple entries.
+        /// </summary>
+        internal static ToolTip BuildDiagnosticToolTip(LineDiagnostic diagnostic)
+        {
+            List<DiagnosticEntry> entries = diagnostic.Entries;
+
+            // Fall back to primary message if no entries are available
+            if (entries == null || entries.Count == 0)
+            {
+                if (string.IsNullOrEmpty(diagnostic.PrimaryMessage))
+                {
+                    return null;
+                }
+
+                entries = new List<DiagnosticEntry>
+                {
+                    new DiagnosticEntry
+                    {
+                        Severity = diagnostic.Severity,
+                        Message = diagnostic.PrimaryMessage,
+                        DiagnosticCode = diagnostic.DiagnosticCode,
+                    }
+                };
+            }
+
+            var textBlock = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 600,
+            };
+            textBlock.SetResourceReference(TextBlock.ForegroundProperty, EnvironmentColors.ToolTipTextBrushKey);
+
+            for (int i = 0; i < entries.Count; i++)
+            {
+                DiagnosticEntry entry = entries[i];
+
+                // Add blank line separator between entries
+                if (i > 0)
+                {
+                    textBlock.Inlines.Add(new System.Windows.Documents.LineBreak());
+                    textBlock.Inlines.Add(new System.Windows.Documents.LineBreak());
+                }
+
+                // Bold error code
+                if (!string.IsNullOrEmpty(entry.DiagnosticCode))
+                {
+                    textBlock.Inlines.Add(new System.Windows.Documents.Bold(
+                        new System.Windows.Documents.Run(entry.DiagnosticCode + ": ")));
+                }
+
+                // Message text
+                string message = entry.Message ?? "";
+                textBlock.Inlines.Add(new System.Windows.Documents.Run(message));
+            }
+
+            var toolTip = new ToolTip
+            {
+                Content = textBlock,
+                Padding = new Thickness(8, 6, 8, 6),
+            };
+            toolTip.SetResourceReference(ToolTip.BackgroundProperty, EnvironmentColors.ToolTipBrushKey);
+            toolTip.SetResourceReference(ToolTip.BorderBrushProperty, EnvironmentColors.ToolTipBorderBrushKey);
+
+            return toolTip;
         }
 
         /// <summary>
@@ -608,6 +690,7 @@ namespace DocumentHealth
                 _view.VisualElement.LayoutUpdated -= OnVisualLayoutUpdated;
                 _dataProvider.DiagnosticsUpdated -= OnDiagnosticsUpdated;
                 _formatMap.FormatMappingChanged -= OnFormatMappingChanged;
+                General.Saved -= OnOptionsSaved;
 
                 if (_textDocument != null)
                 {

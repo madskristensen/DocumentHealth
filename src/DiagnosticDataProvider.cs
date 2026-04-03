@@ -383,6 +383,15 @@ namespace DocumentHealth
                     {
                         targetDiag.Count = sourceDiag.Count;
                     }
+
+                    // Merge entries; prefer source (Error List) entries when they cover
+                    // at least as many diagnostics as the target already has, so we don't
+                    // discard entries that the Error List path didn't match.
+                    if (sourceDiag.Entries.Count >= targetDiag.Entries.Count)
+                    {
+                        targetDiag.Entries.Clear();
+                        targetDiag.Entries.AddRange(sourceDiag.Entries);
+                    }
                 }
                 else
                 {
@@ -452,6 +461,13 @@ namespace DocumentHealth
                         }
 
                         // Add or update the diagnostic for this line
+                        var entry = new DiagnosticEntry
+                        {
+                            Severity = severity,
+                            Message = message,
+                            DiagnosticCode = errorCode,
+                        };
+
                         if (result.TryGetValue(lineNumber, out LineDiagnostic existing))
                         {
                             // Keep the highest severity
@@ -472,10 +488,11 @@ namespace DocumentHealth
                             }
 
                             existing.Count++;
+                            existing.Entries.Add(entry);
                         }
                         else
                         {
-                            result[lineNumber] = new LineDiagnostic
+                            var diag = new LineDiagnostic
                             {
                                 Severity = severity,
                                 PrimaryMessage = message,
@@ -483,6 +500,8 @@ namespace DocumentHealth
                                 Source = "ErrorTag",
                                 Count = 1,
                             };
+                            diag.Entries.Add(entry);
+                            result[lineNumber] = diag;
                         }
                     }
                     catch (ArgumentException)
@@ -764,6 +783,13 @@ namespace DocumentHealth
         /// </summary>
         private static void AddOrUpdateDiagnostic(Dictionary<int, LineDiagnostic> result, int lineNumber, DiagnosticSeverity severity, string message, string errorCode)
         {
+            var entry = new DiagnosticEntry
+            {
+                Severity = severity,
+                Message = message,
+                DiagnosticCode = errorCode,
+            };
+
             if (result.TryGetValue(lineNumber, out LineDiagnostic existing))
             {
                 // Keep the highest severity
@@ -775,10 +801,11 @@ namespace DocumentHealth
                 }
 
                 existing.Count++;
+                existing.Entries.Add(entry);
             }
             else
             {
-                result[lineNumber] = new LineDiagnostic
+                var diag = new LineDiagnostic
                 {
                     Severity = severity,
                     PrimaryMessage = message,
@@ -786,6 +813,8 @@ namespace DocumentHealth
                     Source = null,
                     Count = 1,
                 };
+                diag.Entries.Add(entry);
+                result[lineNumber] = diag;
             }
         }
 
@@ -1088,6 +1117,16 @@ namespace DocumentHealth
         Error = 2,
     }
 
+    /// <summary>
+    /// Represents a single diagnostic entry on a line.
+    /// </summary>
+    internal sealed class DiagnosticEntry
+    {
+        public DiagnosticSeverity Severity { get; set; }
+        public string Message { get; set; }
+        public string DiagnosticCode { get; set; }
+    }
+
     internal class LineDiagnostic
     {
         public DiagnosticSeverity Severity { get; set; }
@@ -1095,6 +1134,11 @@ namespace DocumentHealth
         public string DiagnosticCode { get; set; }
         public string Source { get; set; }
         public int Count { get; set; }
+
+        /// <summary>
+        /// All individual diagnostic entries on this line, used for tooltip display.
+        /// </summary>
+        public List<DiagnosticEntry> Entries { get; } = new List<DiagnosticEntry>();
     }
 
     /// <summary>

@@ -65,6 +65,8 @@ namespace DocumentHealth
             menu.Items.Add(new Separator());
             menu.Items.Add(searchOnline);
             menu.Items.Add(new Separator());
+            AddDisplayToggleSubmenu(menu);
+            menu.Items.Add(new Separator());
 
             var settings = new MenuItem
             {
@@ -77,6 +79,100 @@ namespace DocumentHealth
             ThemedContextMenuHelper.ApplyVsTheme(menu);
 
             return menu;
+        }
+
+        /// <summary>
+        /// Appends a "Display" submenu with checkable toggle items for key display options.
+        /// </summary>
+        public static void AddDisplayToggleSubmenu(ContextMenu menu)
+        {
+            var displayMenu = new MenuItem
+            {
+                Header = "Display",
+                Icon = CreateThemedIcon(KnownMonikers.ShowAllCode),
+            };
+
+            var inlineMessages = CreateToggleItem("Inline Messages", () => General.Instance.ShowInlineMessages);
+            inlineMessages.Click += (s, e) =>
+            {
+                General options = General.Instance;
+                options.ShowInlineMessages = !options.ShowInlineMessages;
+                options.Save();
+            };
+
+            var highlightLines = CreateToggleItem("Highlight Lines", () => General.Instance.HighlightLines != SeverityFilter.None);
+            highlightLines.Click += (s, e) =>
+            {
+                General options = General.Instance;
+                options.HighlightLines = options.HighlightLines != SeverityFilter.None
+                    ? SeverityFilter.None
+                    : SeverityFilter.ErrorsAndWarnings;
+                options.Save();
+            };
+
+            var showErrors = CreateToggleItem("Errors", () => General.Instance.ShowErrors);
+            showErrors.Click += (s, e) =>
+            {
+                General options = General.Instance;
+                options.ShowErrors = !options.ShowErrors;
+                options.Save();
+            };
+
+            var showWarnings = CreateToggleItem("Warnings", () => General.Instance.ShowWarnings);
+            showWarnings.Click += (s, e) =>
+            {
+                General options = General.Instance;
+                options.ShowWarnings = !options.ShowWarnings;
+                options.Save();
+            };
+
+            var showSuggestions = CreateToggleItem("Suggestions", () => General.Instance.ShowSuggestions);
+            showSuggestions.Click += (s, e) =>
+            {
+                General options = General.Instance;
+                options.ShowSuggestions = !options.ShowSuggestions;
+                options.Save();
+            };
+
+            var gutterIcons = CreateToggleItem("Gutter Icons", () => General.Instance.ShowGutterIcons != SeverityFilter.None);
+            gutterIcons.Click += (s, e) =>
+            {
+                General options = General.Instance;
+                options.ShowGutterIcons = options.ShowGutterIcons != SeverityFilter.None
+                    ? SeverityFilter.None
+                    : SeverityFilter.ErrorsAndWarnings;
+                options.Save();
+            };
+
+            displayMenu.Items.Add(inlineMessages);
+            displayMenu.Items.Add(highlightLines);
+            displayMenu.Items.Add(new Separator());
+            displayMenu.Items.Add(showErrors);
+            displayMenu.Items.Add(showWarnings);
+            displayMenu.Items.Add(showSuggestions);
+            displayMenu.Items.Add(new Separator());
+            displayMenu.Items.Add(gutterIcons);
+
+            menu.Items.Add(displayMenu);
+        }
+
+        /// <summary>
+        /// Creates a toggle menu item that shows a checkmark icon when the option is enabled.
+        /// </summary>
+        private static MenuItem CreateToggleItem(string header, Func<bool> isChecked)
+        {
+            CrispImage checkmark = CreateThemedIcon(KnownMonikers.Checkmark);
+
+            var item = new MenuItem
+            {
+                Header = header,
+                Icon = isChecked() ? checkmark : null,
+            };
+
+            // Refresh the checkmark icon each time the menu opens, since options may change externally.
+            item.Loaded += (s, e) => item.Icon = isChecked() ? checkmark : null;
+
+            return item;
         }
 
         private static CrispImage CreateThemedIcon(ImageMoniker moniker)

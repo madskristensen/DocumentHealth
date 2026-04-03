@@ -48,6 +48,7 @@ namespace DocumentHealth
                 Height = 14,
                 Cursor = Cursors.Arrow,
                 Tag = glyphTag.Diagnostic, // Store diagnostic for lazy menu creation
+                ToolTip = InlineDiagnosticsAdornment.BuildDiagnosticToolTip(glyphTag.Diagnostic),
             };
 
             ContextMenu contextMenu = null;
