@@ -161,21 +161,30 @@ namespace DocumentHealth
 
         public void Dispose()
         {
-            if (!_isDisposed)
+            if (_isDisposed)
             {
-                _aggregator.BatchedTagsChanged -= OnBatchedTagsChanged;
+                return;
+            }
 
-                lock (_updateGate)
+            // Set disposed flag first to prevent new updates from starting
+            lock (_updateGate)
+            {
+                if (_isDisposed)
                 {
-                    _isDisposed = true;
-                    _debounceCts?.Cancel();
-                    _debounceCts?.Dispose();
-                    _debounceCts = null;
+                    return;
                 }
 
-                _aggregator.Dispose();
-                GC.SuppressFinalize(this);
+                _isDisposed = true;
+                _debounceCts?.Cancel();
+                _debounceCts?.Dispose();
+                _debounceCts = null;
             }
+
+            // Unsubscribe from events after setting disposed flag
+            _aggregator.BatchedTagsChanged -= OnBatchedTagsChanged;
+            _aggregator.Dispose();
+
+            GC.SuppressFinalize(this);
         }
     }
 }

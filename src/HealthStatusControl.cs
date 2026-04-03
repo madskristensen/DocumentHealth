@@ -109,6 +109,11 @@ namespace DocumentHealth
             _image.Moniker = GetMoniker(errors, warnings);
             System.Windows.Automation.AutomationProperties.SetName(_image, GetAccessibleText(errors, warnings, messages));
 
+            // Update tooltip labels
+            _errorLabel.Content = errors.ToString();
+            _warningLabel.Content = warnings.ToString();
+            _messageLabel.Content = messages.ToString();
+
             _currentErrors = errors;
             _currentWarnings = warnings;
             _currentMessages = messages;

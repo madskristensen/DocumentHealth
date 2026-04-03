@@ -16,7 +16,7 @@ namespace DocumentHealth
     /// <summary>
     /// Renders inline diagnostic messages and line background highlights on the editor surface.
     /// </summary>
-    internal sealed class InlineDiagnosticsAdornment
+    internal sealed class InlineDiagnosticsAdornment : IDisposable
     {
         private readonly IWpfTextView _view;
         private readonly IAdornmentLayer _layer;
@@ -199,7 +199,7 @@ namespace DocumentHealth
                 Cursor = System.Windows.Input.Cursors.Arrow,
             };
 
-            ContextMenu contextMenu = DiagnosticContextMenu.Create(diagnostic);
+            ContextMenu contextMenu = null;
 
             textBlock.MouseRightButtonDown += (s, e) =>
             {
@@ -209,6 +209,13 @@ namespace DocumentHealth
             textBlock.MouseRightButtonUp += (s, e) =>
             {
                 e.Handled = true;
+
+                // Lazily create context menu on first use
+                if (contextMenu == null)
+                {
+                    contextMenu = DiagnosticContextMenu.Create(diagnostic);
+                }
+
                 contextMenu.PlacementTarget = textBlock;
                 contextMenu.IsOpen = true;
             };
@@ -294,6 +301,11 @@ namespace DocumentHealth
         }
 
         private void OnViewClosed(object sender, EventArgs e)
+        {
+            Dispose();
+        }
+
+        public void Dispose()
         {
             if (!_isDisposed)
             {

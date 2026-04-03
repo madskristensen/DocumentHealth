@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
@@ -19,6 +20,11 @@ namespace DocumentHealth
     /// </summary>
     internal sealed class DiagnosticDataProvider : IDisposable
     {
+        // Compiled regex for extracting diagnostic codes (e.g., CS0168, CA1000)
+        private static readonly Regex DiagnosticCodeRegex = new Regex(
+            @"^([A-Z]{2,4}\d{4,5})\s*:",
+            RegexOptions.Compiled);
+
         private readonly ITextView _view;
         private readonly JoinableTaskFactory _joinableTaskFactory;
         private readonly General _options;
@@ -65,9 +71,9 @@ namespace DocumentHealth
                     {
                         errorList = serviceProvider.GetService(typeof(SVsErrorList)) as IErrorList;
                     }
-                    catch
+                    catch (InvalidOperationException)
                     {
-                        // Service may not be available
+                        // Service may not be available during shutdown or in certain contexts
                     }
 
                     return new DiagnosticDataProvider(textView, joinableTaskFactory, options, errorTableManager, errorList);
@@ -303,7 +309,7 @@ namespace DocumentHealth
 
                             try
                             {
-                                foreach (ITableEntriesSnapshotFactory factory in collector.Factories.ToArray())
+                                foreach (ITableEntriesSnapshotFactory factory in collector.Factories)
                                 {
                                     ITableEntriesSnapshot snapshot = factory.GetCurrentSnapshot();
 
@@ -420,9 +426,13 @@ namespace DocumentHealth
 
                 AddOrUpdateDiagnostic(result, lineNumber, severity, message, errorCode);
             }
-            catch
+            catch (InvalidOperationException)
             {
-                // Entry access failed
+                // Entry may have been removed during enumeration
+            }
+            catch (ArgumentException)
+            {
+                // Entry access failed due to invalid state
             }
         }
 
@@ -496,9 +506,13 @@ namespace DocumentHealth
                     AddOrUpdateDiagnostic(result, lineNumber, severity, message, errorCode);
                 }
             }
-            catch
+            catch (InvalidOperationException)
             {
-                // Snapshot access failed
+                // Snapshot may have changed during enumeration
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // Index became invalid during enumeration
             }
         }
 
@@ -575,7 +589,7 @@ namespace DocumentHealth
             }
 
             // Match a leading diagnostic code pattern like CS0168: or CA1000:
-            var match = System.Text.RegularExpressions.Regex.Match(message, @"^([A-Z]{2,4}\d{4,5})\s*:");
+            Match match = DiagnosticCodeRegex.Match(message);
             return match.Success ? match.Groups[1].Value : null;
         }
 
@@ -584,14 +598,39 @@ namespace DocumentHealth
         /// </summary>
         internal static string StripCodePrefix(string message, string code)
         {
-            // Remove patterns like CS0161:  or CS0161 : 
-            var match = System.Text.RegularExpressions.Regex.Match(message, @"^" + System.Text.RegularExpressions.Regex.Escape(code) + @"\s*:\s*");
-            if (match.Success)
+            if (string.IsNullOrEmpty(message) || string.IsNullOrEmpty(code))
             {
-                return message.Substring(match.Length);
+                return message;
             }
 
-            return message;
+            // Check if message starts with the code
+            if (!message.StartsWith(code, StringComparison.Ordinal))
+            {
+                return message;
+            }
+
+            // Find the position after the code and any following ": " pattern
+            int pos = code.Length;
+
+            // Skip whitespace
+            while (pos < message.Length && char.IsWhiteSpace(message[pos]))
+            {
+                pos++;
+            }
+
+            // Skip colon if present
+            if (pos < message.Length && message[pos] == ':')
+            {
+                pos++;
+
+                // Skip whitespace after colon
+                while (pos < message.Length && char.IsWhiteSpace(message[pos]))
+                {
+                    pos++;
+                }
+            }
+
+            return message.Substring(pos);
         }
 
         /// <summary>
@@ -606,9 +645,13 @@ namespace DocumentHealth
                     return document.FilePath;
                 }
             }
-            catch
+            catch (ObjectDisposedException)
             {
-                // Property access may fail in some edge cases
+                // View or buffer may be disposed
+            }
+            catch (InvalidOperationException)
+            {
+                // Property access may fail during disposal
             }
 
             return null;

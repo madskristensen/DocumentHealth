@@ -51,7 +51,12 @@ namespace DocumentHealth
                     : diagnostic.PrimaryMessage ?? "";
 
                 string url = "https://www.bing.com/search?q=" + System.Uri.EscapeDataString(query);
-                Process.Start(url);
+
+                var psi = new ProcessStartInfo(url)
+                {
+                    UseShellExecute = true
+                };
+                Process.Start(psi);
             };
 
             menu.Items.Add(copyMessage);

@@ -41,9 +41,10 @@ namespace DocumentHealth
                 Width = 14,
                 Height = 14,
                 Cursor = Cursors.Arrow,
+                Tag = glyphTag.Diagnostic, // Store diagnostic for lazy menu creation
             };
 
-            ContextMenu contextMenu = DiagnosticContextMenu.Create(glyphTag.Diagnostic);
+            ContextMenu contextMenu = null;
 
             image.MouseRightButtonDown += (s, e) =>
             {
@@ -53,6 +54,13 @@ namespace DocumentHealth
             image.MouseRightButtonUp += (s, e) =>
             {
                 e.Handled = true;
+
+                // Lazily create context menu on first use
+                if (contextMenu == null)
+                {
+                    contextMenu = DiagnosticContextMenu.Create(glyphTag.Diagnostic);
+                }
+
                 contextMenu.PlacementTarget = image;
                 contextMenu.IsOpen = true;
             };
