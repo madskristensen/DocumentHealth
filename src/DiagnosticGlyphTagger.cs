@@ -24,6 +24,9 @@ namespace DocumentHealth
         [Import]
         internal SVsServiceProvider ServiceProvider = null;
 
+        [Import]
+        internal IViewTagAggregatorFactoryService ViewTagAggregatorFactoryService = null;
+
         public ITagger<T> CreateTagger<T>(ITextView textView, ITextBuffer buffer) where T : ITag
         {
             if (textView.TextBuffer != buffer)
@@ -39,7 +42,7 @@ namespace DocumentHealth
             }
 
             DiagnosticDataProvider dataProvider = DiagnosticDataProvider.GetOrCreate(
-                textView, JoinableTaskContext.Factory, options, TableManagerProvider, ServiceProvider);
+                textView, JoinableTaskContext.Factory, options, TableManagerProvider, ServiceProvider, ViewTagAggregatorFactoryService);
 
             return textView.Properties.GetOrCreateSingletonProperty(() => new DiagnosticGlyphTagger(textView, options, dataProvider)) as ITagger<T>;
         }

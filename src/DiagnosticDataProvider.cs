@@ -8,15 +8,17 @@ using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Shell.TableControl;
 using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text;
+using Microsoft.VisualStudio.Text.Adornments;
 using Microsoft.VisualStudio.Text.Editor;
+using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Threading;
 
 namespace DocumentHealth
 {
     /// <summary>
     /// Provides shared diagnostic data for both inline adornments and glyph margin indicators.
-    /// This class uses the Error List (ITableManager) as the authoritative source of diagnostics,
-    /// ensuring consistent data across all file types including those without squiggle taggers.
+    /// This class uses both IErrorTag from the editor (for fast response) and the Error List 
+    /// (for complete diagnostic data), ensuring responsive UI with accurate information.
     /// </summary>
     internal sealed class DiagnosticDataProvider : IDisposable
     {
@@ -30,6 +32,7 @@ namespace DocumentHealth
         private readonly General _options;
         private readonly ITableManager _errorTableManager;
         private readonly IErrorList _errorList;
+        private readonly ITagAggregator<IErrorTag> _errorTagAggregator;
 
         private volatile bool _isDisposed;
         private readonly object _updateGate = new object();
@@ -58,7 +61,8 @@ namespace DocumentHealth
             JoinableTaskFactory joinableTaskFactory,
             General options,
             ITableManagerProvider tableManagerProvider,
-            SVsServiceProvider serviceProvider)
+            SVsServiceProvider serviceProvider,
+            IViewTagAggregatorFactoryService viewTagAggregatorFactoryService)
         {
             return textView.Properties.GetOrCreateSingletonProperty(
                 typeof(DiagnosticDataProvider),
@@ -76,7 +80,7 @@ namespace DocumentHealth
                         // Service may not be available during shutdown or in certain contexts
                     }
 
-                    return new DiagnosticDataProvider(textView, joinableTaskFactory, options, errorTableManager, errorList);
+                    return new DiagnosticDataProvider(textView, joinableTaskFactory, options, errorTableManager, errorList, viewTagAggregatorFactoryService);
                 });
         }
 
@@ -85,7 +89,8 @@ namespace DocumentHealth
             JoinableTaskFactory joinableTaskFactory,
             General options,
             ITableManager errorTableManager,
-            IErrorList errorList)
+            IErrorList errorList,
+            IViewTagAggregatorFactoryService viewTagAggregatorFactoryService)
         {
             _view = view;
             _joinableTaskFactory = joinableTaskFactory;
@@ -93,10 +98,19 @@ namespace DocumentHealth
             _errorTableManager = errorTableManager;
             _errorList = errorList;
 
+            // Create tag aggregator for fast error tag detection
+            _errorTagAggregator = viewTagAggregatorFactoryService?.CreateTagAggregator<IErrorTag>(view);
+
             _view.Closed += OnViewClosed;
             _view.TextBuffer.Changed += OnTextBufferChanged;
 
-            // Subscribe to error list changes immediately
+            // Subscribe to error tag changes for immediate feedback
+            if (_errorTagAggregator != null)
+            {
+                _errorTagAggregator.BatchedTagsChanged += OnErrorTagsChanged;
+            }
+
+            // Subscribe to error list changes for complete diagnostic data
             SubscribeToErrorListChanges();
 
             ScheduleUpdate(immediate: true);
@@ -142,6 +156,20 @@ namespace DocumentHealth
 
             // Schedule an update to re-fetch diagnostics from the error list
             ScheduleUpdate();
+        }
+
+        /// <summary>
+        /// Called when error tags change in the editor. Updates diagnostics immediately for fast feedback.
+        /// </summary>
+        private void OnErrorTagsChanged(object sender, BatchedTagsChangedEventArgs e)
+        {
+            if (_isDisposed)
+            {
+                return;
+            }
+
+            // Immediately collect diagnostics from error tags for fast UI response
+            ScheduleUpdate(immediate: true);
         }
 
         private void OnTextBufferChanged(object sender, TextContentChangedEventArgs e)
@@ -236,8 +264,17 @@ namespace DocumentHealth
                     return;
                 }
 
-                // Collect diagnostics directly from the Error List
-                Dictionary<int, LineDiagnostic> diagnostics = CollectDiagnosticsFromErrorList();
+                // First, collect diagnostics from error tags (fast path - immediate feedback)
+                Dictionary<int, LineDiagnostic> diagnostics = CollectDiagnosticsFromErrorTags();
+
+                if (_isDisposed || token.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                // Then, enhance with Error List data (slower but has complete information)
+                Dictionary<int, LineDiagnostic> errorListDiagnostics = CollectDiagnosticsFromErrorList();
+                MergeDiagnostics(diagnostics, errorListDiagnostics);
 
                 if (_isDisposed || token.IsCancellationRequested)
                 {
@@ -257,6 +294,166 @@ namespace DocumentHealth
             {
                 // View disposed
             }
+        }
+
+        /// <summary>
+        /// Merges Error List diagnostics into tag-based diagnostics.
+        /// Error List data is authoritative for messages and diagnostic codes.
+        /// </summary>
+        private static void MergeDiagnostics(Dictionary<int, LineDiagnostic> target, Dictionary<int, LineDiagnostic> source)
+        {
+            foreach (KeyValuePair<int, LineDiagnostic> kvp in source)
+            {
+                int line = kvp.Key;
+                LineDiagnostic sourceDiag = kvp.Value;
+
+                if (target.TryGetValue(line, out LineDiagnostic targetDiag))
+                {
+                    // Error List data has complete message and diagnostic code - prefer it
+                    if (!string.IsNullOrEmpty(sourceDiag.PrimaryMessage))
+                    {
+                        targetDiag.PrimaryMessage = sourceDiag.PrimaryMessage;
+                    }
+
+                    if (!string.IsNullOrEmpty(sourceDiag.DiagnosticCode))
+                    {
+                        targetDiag.DiagnosticCode = sourceDiag.DiagnosticCode;
+                    }
+
+                    if (!string.IsNullOrEmpty(sourceDiag.Source))
+                    {
+                        targetDiag.Source = sourceDiag.Source;
+                    }
+
+                    // Keep the highest severity
+                    if (sourceDiag.Severity > targetDiag.Severity)
+                    {
+                        targetDiag.Severity = sourceDiag.Severity;
+                    }
+
+                    // Use the higher count
+                    if (sourceDiag.Count > targetDiag.Count)
+                    {
+                        targetDiag.Count = sourceDiag.Count;
+                    }
+                }
+                else
+                {
+                    // Error List has entries not found in tags - add them
+                    target[line] = sourceDiag;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Collects diagnostics from IErrorTag instances in the editor.
+        /// This provides fast feedback as tags are generated immediately by the compiler/analyzer.
+        /// </summary>
+        private Dictionary<int, LineDiagnostic> CollectDiagnosticsFromErrorTags()
+        {
+            var result = new Dictionary<int, LineDiagnostic>();
+
+            if (_errorTagAggregator == null || _view.IsClosed)
+            {
+                return result;
+            }
+
+            try
+            {
+                ITextSnapshot snapshot = _view.TextSnapshot;
+                SnapshotSpan entireSpan = new SnapshotSpan(snapshot, 0, snapshot.Length);
+
+                foreach (IMappingTagSpan<IErrorTag> tagSpan in _errorTagAggregator.GetTags(entireSpan))
+                {
+                    try
+                    {
+                        IErrorTag errorTag = tagSpan.Tag;
+                        if (errorTag == null)
+                        {
+                            continue;
+                        }
+
+                        // Get the severity from the error type
+                        DiagnosticSeverity severity = GetSeverityFromErrorType(errorTag.ErrorType);
+
+                        if (!IsSeverityEnabled(severity))
+                        {
+                            continue;
+                        }
+
+                        // Get the line number from the tag span
+                        NormalizedSnapshotSpanCollection spans = tagSpan.Span.GetSpans(snapshot);
+                        if (spans.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        int lineNumber = snapshot.GetLineNumberFromPosition(spans[0].Start.Position);
+
+                        // Extract message from tooltip content
+                        string message = ExtractToolTipText(errorTag.ToolTipContent);
+
+                        // Try to extract diagnostic code from message
+                        string errorCode = null;
+                        if (!string.IsNullOrEmpty(message))
+                        {
+                            errorCode = ExtractDiagnosticCode(message);
+                            if (!string.IsNullOrEmpty(errorCode))
+                            {
+                                message = StripCodePrefix(message, errorCode);
+                            }
+                        }
+
+                        // Add or update the diagnostic for this line
+                        if (result.TryGetValue(lineNumber, out LineDiagnostic existing))
+                        {
+                            // Keep the highest severity
+                            if (severity > existing.Severity)
+                            {
+                                existing.Severity = severity;
+                                if (!string.IsNullOrEmpty(message))
+                                {
+                                    existing.PrimaryMessage = message;
+                                    existing.DiagnosticCode = errorCode;
+                                }
+                            }
+                            // Update message if we don't have one yet
+                            else if (string.IsNullOrEmpty(existing.PrimaryMessage) && !string.IsNullOrEmpty(message))
+                            {
+                                existing.PrimaryMessage = message;
+                                existing.DiagnosticCode = errorCode;
+                            }
+
+                            existing.Count++;
+                        }
+                        else
+                        {
+                            result[lineNumber] = new LineDiagnostic
+                            {
+                                Severity = severity,
+                                PrimaryMessage = message,
+                                DiagnosticCode = errorCode,
+                                Source = "ErrorTag",
+                                Count = 1,
+                            };
+                        }
+                    }
+                    catch (ArgumentException)
+                    {
+                        // Tag span may be invalid
+                    }
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                // Aggregator or view disposed
+            }
+            catch (InvalidOperationException)
+            {
+                // Collection modified during enumeration
+            }
+
+            return result;
         }
 
         /// <summary>
@@ -579,6 +776,152 @@ namespace DocumentHealth
         }
 
         /// <summary>
+        /// Maps an IErrorTag.ErrorType string to DiagnosticSeverity.
+        /// Uses PredefinedErrorTypeNames constants for matching.
+        /// </summary>
+        private static DiagnosticSeverity GetSeverityFromErrorType(string errorType)
+        {
+            if (string.IsNullOrEmpty(errorType))
+            {
+                return DiagnosticSeverity.Message;
+            }
+
+            // Match against PredefinedErrorTypeNames (case-insensitive for robustness)
+            if (string.Equals(errorType, PredefinedErrorTypeNames.SyntaxError, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(errorType, PredefinedErrorTypeNames.CompilerError, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(errorType, "error", StringComparison.OrdinalIgnoreCase))
+            {
+                return DiagnosticSeverity.Error;
+            }
+
+            if (string.Equals(errorType, PredefinedErrorTypeNames.Warning, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(errorType, "compiler warning", StringComparison.OrdinalIgnoreCase))
+            {
+                return DiagnosticSeverity.Warning;
+            }
+
+            if (string.Equals(errorType, PredefinedErrorTypeNames.Suggestion, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(errorType, PredefinedErrorTypeNames.HintedSuggestion, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(errorType, "suggestion", StringComparison.OrdinalIgnoreCase))
+            {
+                return DiagnosticSeverity.Message;
+            }
+
+            // Default to message for unknown types
+            return DiagnosticSeverity.Message;
+        }
+
+        /// <summary>
+        /// Extracts text from IErrorTag.ToolTipContent.
+        /// Handles string content directly, and attempts to extract text from WPF elements.
+        /// </summary>
+        private static string ExtractToolTipText(object toolTipContent)
+        {
+            if (toolTipContent == null)
+            {
+                return null;
+            }
+
+            // Direct string content
+            if (toolTipContent is string text)
+            {
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            }
+
+            // Handle ContainerElement (used by Roslyn and other analyzers)
+            if (toolTipContent is ContainerElement container)
+            {
+                return ExtractTextFromContainerElement(container);
+            }
+
+            // Handle ClassifiedTextElement
+            if (toolTipContent is ClassifiedTextElement classifiedText)
+            {
+                return ExtractTextFromClassifiedTextElement(classifiedText);
+            }
+
+            // Handle ImageElement with text (less common)
+            if (toolTipContent is ImageElement imageElement && !string.IsNullOrWhiteSpace(imageElement.AutomationName))
+            {
+                return imageElement.AutomationName;
+            }
+
+            // Fallback: try ToString() for unknown types
+            string strValue = toolTipContent.ToString();
+            if (!string.IsNullOrWhiteSpace(strValue) && strValue != toolTipContent.GetType().FullName)
+            {
+                return strValue;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Extracts text from a ContainerElement by recursively processing its elements.
+        /// </summary>
+        private static string ExtractTextFromContainerElement(ContainerElement container)
+        {
+            if (container?.Elements == null)
+            {
+                return null;
+            }
+
+            var textParts = new List<string>();
+
+            foreach (object element in container.Elements)
+            {
+                string extracted = null;
+
+                if (element is string str)
+                {
+                    extracted = str;
+                }
+                else if (element is ClassifiedTextElement classifiedText)
+                {
+                    extracted = ExtractTextFromClassifiedTextElement(classifiedText);
+                }
+                else if (element is ContainerElement nestedContainer)
+                {
+                    extracted = ExtractTextFromContainerElement(nestedContainer);
+                }
+                else if (element is ImageElement imageElement && !string.IsNullOrWhiteSpace(imageElement.AutomationName))
+                {
+                    extracted = imageElement.AutomationName;
+                }
+
+                if (!string.IsNullOrWhiteSpace(extracted))
+                {
+                    textParts.Add(extracted);
+                }
+            }
+
+            return textParts.Count > 0 ? string.Join(" ", textParts) : null;
+        }
+
+        /// <summary>
+        /// Extracts text from a ClassifiedTextElement by concatenating its runs.
+        /// </summary>
+        private static string ExtractTextFromClassifiedTextElement(ClassifiedTextElement classifiedText)
+        {
+            if (classifiedText?.Runs == null)
+            {
+                return null;
+            }
+
+            var textParts = new List<string>();
+
+            foreach (ClassifiedTextRun run in classifiedText.Runs)
+            {
+                if (!string.IsNullOrEmpty(run.Text))
+                {
+                    textParts.Add(run.Text);
+                }
+            }
+
+            return textParts.Count > 0 ? string.Concat(textParts) : null;
+        }
+
+        /// <summary>
         /// Attempts to extract a diagnostic code (like CS0168) from the beginning of a message string.
         /// </summary>
         internal static string ExtractDiagnosticCode(string message)
@@ -669,6 +1012,13 @@ namespace DocumentHealth
                 _isDisposed = true;
                 _view.Closed -= OnViewClosed;
                 _view.TextBuffer.Changed -= OnTextBufferChanged;
+
+                // Unsubscribe from error tag changes and dispose aggregator
+                if (_errorTagAggregator != null)
+                {
+                    _errorTagAggregator.BatchedTagsChanged -= OnErrorTagsChanged;
+                    _errorTagAggregator.Dispose();
+                }
 
                 // Unsubscribe from error list changes
                 UnsubscribeFromErrorListChanges();
