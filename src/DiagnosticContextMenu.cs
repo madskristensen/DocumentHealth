@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using Microsoft.VisualStudio.Imaging;
 using Microsoft.VisualStudio.Imaging.Interop;
+using Microsoft.VisualStudio.PlatformUI;
 
 namespace DocumentHealth
 {
@@ -18,7 +19,7 @@ namespace DocumentHealth
             var copyMessage = new MenuItem
             {
                 Header = "Copy Diagnostic Message",
-                Icon = new CrispImage { Moniker = KnownMonikers.Copy, Width = 16, Height = 16 },
+                Icon = CreateThemedIcon(KnownMonikers.Copy),
             };
             copyMessage.Click += (s, e) =>
             {
@@ -28,7 +29,7 @@ namespace DocumentHealth
             var copyCode = new MenuItem
             {
                 Header = "Copy Diagnostic Code",
-                Icon = new CrispImage { Moniker = KnownMonikers.CodeInformation, Width = 16, Height = 16 },
+                Icon = CreateThemedIcon(KnownMonikers.CodeInformation),
                 IsEnabled = !string.IsNullOrEmpty(diagnostic.DiagnosticCode),
             };
             copyCode.Click += (s, e) =>
@@ -42,7 +43,7 @@ namespace DocumentHealth
             var searchOnline = new MenuItem
             {
                 Header = "Search Online",
-                Icon = new CrispImage { Moniker = KnownMonikers.SearchContract, Width = 16, Height = 16 },
+                Icon = CreateThemedIcon(KnownMonikers.SearchContract),
             };
             searchOnline.Click += (s, e) =>
             {
@@ -68,7 +69,7 @@ namespace DocumentHealth
             var settings = new MenuItem
             {
                 Header = "Settings...",
-                Icon = new CrispImage { Moniker = KnownMonikers.Settings, Width = 16, Height = 16 },
+                Icon = CreateThemedIcon(KnownMonikers.Settings),
             };
             settings.Click += (s, e) => VS.Settings.OpenAsync<OptionsProvider.GeneralOptions>().FireAndForget();
             menu.Items.Add(settings);
@@ -76,6 +77,32 @@ namespace DocumentHealth
             ThemedContextMenuHelper.ApplyVsTheme(menu);
 
             return menu;
+        }
+
+        private static CrispImage CreateThemedIcon(ImageMoniker moniker)
+        {
+            var image = new CrispImage
+            {
+                Moniker = moniker,
+                Width = 16,
+                Height = 16,
+            };
+
+            // Disable automatic background color detection to prevent the visual shift
+            // when mouse hovers over menu items and the highlight background changes.
+            // This tells CrispImage not to automatically re-render when background changes.
+            ImageThemingUtilities.SetImageBackgroundColor(image, GetIconBackgroundColor());
+
+            return image;
+        }
+
+        private static System.Windows.Media.Color GetIconBackgroundColor()
+        {
+            // Get the actual menu icon background color from VS theme
+            var brush = (System.Windows.Media.SolidColorBrush)Application.Current.TryFindResource(
+                Microsoft.VisualStudio.Shell.VsBrushes.CommandBarMenuIconBackgroundKey);
+
+            return brush?.Color ?? System.Windows.Media.Colors.White;
         }
     }
 }
