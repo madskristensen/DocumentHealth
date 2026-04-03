@@ -1,11 +1,8 @@
-using System;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
-using System.Linq;
-using System.Reflection;
-using System.Threading;
+using Microsoft.VisualStudio.Shell.Interop;
+using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text;
-using Microsoft.VisualStudio.Text.Adornments;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Threading;
@@ -20,10 +17,13 @@ namespace DocumentHealth
     internal sealed class DiagnosticGlyphTaggerProvider : IViewTaggerProvider
     {
         [Import]
-        internal IViewTagAggregatorFactoryService ViewTagAggregatorFactoryService = null;
+        internal JoinableTaskContext JoinableTaskContext = null;
 
         [Import]
-        internal JoinableTaskContext JoinableTaskContext = null;
+        internal ITableManagerProvider TableManagerProvider = null;
+
+        [Import]
+        internal SVsServiceProvider ServiceProvider = null;
 
         public ITagger<T> CreateTagger<T>(ITextView textView, ITextBuffer buffer) where T : ITag
         {
@@ -39,235 +39,104 @@ namespace DocumentHealth
                 return null;
             }
 
-            ITagAggregator<IErrorTag> aggregator = ViewTagAggregatorFactoryService.CreateTagAggregator<IErrorTag>(
-                textView,
-                (TagAggregatorOptions)TagAggregatorOptions2.DeferTaggerCreation);
+            // Get or create the shared DiagnosticDataProvider
+            DiagnosticDataProvider dataProvider = GetOrCreateDataProvider(textView, options);
 
+            return textView.Properties.GetOrCreateSingletonProperty(() => new DiagnosticGlyphTagger(textView, options, dataProvider)) as ITagger<T>;
+        }
+
+        private DiagnosticDataProvider GetOrCreateDataProvider(ITextView textView, General options)
+        {
             return textView.Properties.GetOrCreateSingletonProperty(
-                typeof(DiagnosticGlyphTagger),
-                () => new DiagnosticGlyphTagger(textView, aggregator, JoinableTaskContext.Factory, options)) as ITagger<T>;
+                typeof(DiagnosticDataProvider),
+                () =>
+                {
+                    ITableManager errorTableManager = TableManagerProvider.GetTableManager(StandardTables.ErrorsTable);
+
+                    // Get the IErrorList service for direct access to the table control
+                    IErrorList errorList = null;
+                    try
+                    {
+                        errorList = ServiceProvider.GetService(typeof(SVsErrorList)) as IErrorList;
+                    }
+                    catch
+                    {
+                        // Service may not be available
+                    }
+
+                    return new DiagnosticDataProvider(textView, JoinableTaskContext.Factory, options, errorTableManager, errorList);
+                });
         }
     }
 
     internal sealed class DiagnosticGlyphTagger : ITagger<DiagnosticGlyphTag>, IDisposable
     {
         private readonly ITextView _view;
-        private readonly ITagAggregator<IErrorTag> _aggregator;
-        private readonly JoinableTaskFactory _joinableTaskFactory;
         private readonly General _options;
-        private readonly object _updateGate = new object();
+        private readonly DiagnosticDataProvider _dataProvider;
 
         private volatile bool _isDisposed;
-        private CancellationTokenSource _debounceCts;
-        private Dictionary<int, LineDiagnostic> _diagnosticsByLine = new Dictionary<int, LineDiagnostic>();
+        private int _lastDiagnosticCount;
 
         public event EventHandler<SnapshotSpanEventArgs> TagsChanged;
 
         public DiagnosticGlyphTagger(
             ITextView view,
-            ITagAggregator<IErrorTag> aggregator,
-            JoinableTaskFactory joinableTaskFactory,
-            General options)
+            General options,
+            DiagnosticDataProvider dataProvider)
         {
             _view = view;
-            _aggregator = aggregator;
-            _joinableTaskFactory = joinableTaskFactory;
             _options = options;
+            _dataProvider = dataProvider;
 
-            _aggregator.BatchedTagsChanged += OnBatchedTagsChanged;
+            _dataProvider.DiagnosticsUpdated += OnDiagnosticsUpdated;
             _view.Closed += OnViewClosed;
-            _view.TextBuffer.Changed += OnTextBufferChanged;
 
-            ScheduleUpdate(immediate: true);
+            // Fire an initial TagsChanged to ensure the tagger is registered with the glyph margin.
+            // This must happen on the UI thread after the view is fully initialized.
+            FireTagsChangedOnUIThreadAsync().FireAndForget();
         }
 
-        private void OnBatchedTagsChanged(object sender, BatchedTagsChangedEventArgs e)
+        private void OnDiagnosticsUpdated(object sender, EventArgs e)
         {
-            ScheduleUpdate();
-        }
-
-        private void OnTextBufferChanged(object sender, TextContentChangedEventArgs e)
-        {
-            if (_isDisposed || _diagnosticsByLine.Count == 0)
+            if (_isDisposed || _view.IsClosed)
             {
                 return;
             }
 
-            foreach (ITextChange change in e.Changes)
+            int newCount = _dataProvider.DiagnosticsByLine.Count;
+
+            // Only fire if there's actually a change
+            if (newCount != _lastDiagnosticCount || newCount > 0)
             {
-                int newlinesBefore = CountNewlines(change.OldText);
-                int newlinesAfter = CountNewlines(change.NewText);
-
-                if (newlinesBefore != newlinesAfter)
-                {
-                    // Line count changed; clear stale diagnostics and fire TagsChanged
-                    // so glyphs disappear immediately instead of lingering at old positions
-                    _diagnosticsByLine = new Dictionary<int, LineDiagnostic>();
-
-                    ITextSnapshot snapshot = _view.TextSnapshot;
-                    TagsChanged?.Invoke(this, new SnapshotSpanEventArgs(new SnapshotSpan(snapshot, 0, snapshot.Length)));
-                    return;
-                }
+                _lastDiagnosticCount = newCount;
+                FireTagsChangedOnUIThreadAsync().FireAndForget();
             }
         }
 
-        private static int CountNewlines(string text)
+        private async System.Threading.Tasks.Task FireTagsChangedOnUIThreadAsync()
         {
-            int count = 0;
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-            for (int i = 0; i < text.Length; i++)
+            if (_isDisposed || _view.IsClosed)
             {
-                if (text[i] == '\r')
-                {
-                    count++;
-
-                    if (i + 1 < text.Length && text[i + 1] == '\n')
-                    {
-                        i++;
-                    }
-                }
-                else if (text[i] == '\n')
-                {
-                    count++;
-                }
+                return;
             }
 
-            return count;
+            FireTagsChanged();
         }
 
-        private void ScheduleUpdate(bool immediate = false)
+        private void FireTagsChanged()
         {
-            CancellationTokenSource nextCts;
-
-            lock (_updateGate)
-            {
-                if (_isDisposed)
-                {
-                    return;
-                }
-
-                _debounceCts?.Cancel();
-                _debounceCts?.Dispose();
-                _debounceCts = new CancellationTokenSource();
-                nextCts = _debounceCts;
-            }
-
-            int delay = immediate ? 0 : Math.Max(0, _options.UpdateDelayMilliseconds);
-            UpdateWithDebounceAsync(nextCts.Token, delay).FireAndForget();
-        }
-
-        private async System.Threading.Tasks.Task UpdateWithDebounceAsync(CancellationToken token, int delay)
-        {
-            try
-            {
-                if (delay > 0)
-                {
-                    await System.Threading.Tasks.Task.Delay(delay, token).ConfigureAwait(false);
-                }
-
-                token.ThrowIfCancellationRequested();
-
-                Dictionary<int, LineDiagnostic> diagnostics = await System.Threading.Tasks.Task.Run(
-                    () => CollectDiagnostics(token), token).ConfigureAwait(false);
-
-                await _joinableTaskFactory.SwitchToMainThreadAsync(token);
-
-                if (_isDisposed || token.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                _diagnosticsByLine = diagnostics;
-
-                ITextSnapshot snapshot = _view.TextSnapshot;
-                TagsChanged?.Invoke(this, new SnapshotSpanEventArgs(new SnapshotSpan(snapshot, 0, snapshot.Length)));
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (ObjectDisposedException)
-            {
-            }
-        }
-
-        private Dictionary<int, LineDiagnostic> CollectDiagnostics(CancellationToken token)
-        {
-            var result = new Dictionary<int, LineDiagnostic>();
-
-            try
-            {
-                ITextSnapshot snapshot = _view.TextSnapshot;
-                SnapshotSpan fullSpan = new SnapshotSpan(snapshot, 0, snapshot.Length);
-
-                foreach (IMappingTagSpan<IErrorTag> tagSpan in _aggregator.GetTags(fullSpan))
-                {
-                    token.ThrowIfCancellationRequested();
-
-                    NormalizedSnapshotSpanCollection spans = tagSpan.Span.GetSpans(snapshot);
-                    if (spans.Count == 0)
-                    {
-                        continue;
-                    }
-
-                    SnapshotSpan span = spans[0];
-                    int lineNumber = snapshot.GetLineNumberFromPosition(span.Start.Position);
-                    DiagnosticSeverity severity = GetSeverity(tagSpan.Tag.ErrorType);
-
-                    if (!IsSeverityEnabled(severity))
-                    {
-                        continue;
-                    }
-
-                    string message = ExtractTooltipText(tagSpan.Tag.ToolTipContent);
-
-                    if (string.IsNullOrWhiteSpace(message))
-                    {
-                        message = ExtractDescriptionViaReflection(tagSpan.Tag);
-                    }
-
-                    if (string.IsNullOrWhiteSpace(message))
-                    {
-                        message = GetFallbackMessage(severity);
-                    }
-
-                    string diagnosticCode = ExtractDiagnosticCode(message);
-                    if (!string.IsNullOrEmpty(diagnosticCode))
-                    {
-                        message = StripCodePrefix(message, diagnosticCode);
-                    }
-
-                    if (result.TryGetValue(lineNumber, out LineDiagnostic existing))
-                    {
-                        if (severity > existing.Severity)
-                        {
-                            existing.Severity = severity;
-                            existing.PrimaryMessage = message;
-                            existing.DiagnosticCode = diagnosticCode;
-                        }
-
-                        existing.Count++;
-                    }
-                    else
-                    {
-                        result[lineNumber] = new LineDiagnostic
-                        {
-                            Severity = severity,
-                            PrimaryMessage = message,
-                            DiagnosticCode = diagnosticCode,
-                            Count = 1,
-                        };
-                    }
-                }
-            }
-            catch (ObjectDisposedException) { }
-            catch (InvalidOperationException) { }
-
-            return result;
+            ITextSnapshot snapshot = _view.TextSnapshot;
+            TagsChanged?.Invoke(this, new SnapshotSpanEventArgs(new SnapshotSpan(snapshot, 0, snapshot.Length)));
         }
 
         public IEnumerable<ITagSpan<DiagnosticGlyphTag>> GetTags(NormalizedSnapshotSpanCollection spans)
         {
-            if (_diagnosticsByLine.Count == 0 || spans.Count == 0)
+            IReadOnlyDictionary<int, LineDiagnostic> diagnosticsByLine = _dataProvider.DiagnosticsByLine;
+
+            if (diagnosticsByLine.Count == 0 || spans.Count == 0)
             {
                 yield break;
             }
@@ -281,7 +150,7 @@ namespace DocumentHealth
 
                 for (int line = startLine; line <= endLine; line++)
                 {
-                    if (_diagnosticsByLine.TryGetValue(line, out LineDiagnostic diagnostic) && ShouldShowGlyph(diagnostic.Severity))
+                    if (diagnosticsByLine.TryGetValue(line, out LineDiagnostic diagnostic) && ShouldShowGlyph(diagnostic.Severity))
                     {
                         ITextSnapshotLine snapshotLine = snapshot.GetLineFromLineNumber(line);
                         SnapshotSpan lineSpan = new SnapshotSpan(snapshotLine.Start, snapshotLine.Length > 0 ? 1 : 0);
@@ -307,135 +176,6 @@ namespace DocumentHealth
             }
         }
 
-        private bool IsSeverityEnabled(DiagnosticSeverity severity)
-        {
-            switch (severity)
-            {
-                case DiagnosticSeverity.Error: return _options.ShowErrors;
-                case DiagnosticSeverity.Warning: return _options.ShowWarnings;
-                case DiagnosticSeverity.Message: return _options.ShowSuggestions;
-                default: return true;
-            }
-        }
-
-        private static DiagnosticSeverity GetSeverity(string errorType)
-        {
-            if (string.IsNullOrEmpty(errorType))
-            {
-                return DiagnosticSeverity.Message;
-            }
-
-            switch (errorType)
-            {
-                case PredefinedErrorTypeNames.CompilerError:
-                case PredefinedErrorTypeNames.OtherError:
-                case PredefinedErrorTypeNames.SyntaxError:
-                    return DiagnosticSeverity.Error;
-                case PredefinedErrorTypeNames.Warning:
-                    return DiagnosticSeverity.Warning;
-                case PredefinedErrorTypeNames.Suggestion:
-                case PredefinedErrorTypeNames.HintedSuggestion:
-                    return DiagnosticSeverity.Message;
-                default:
-                    if (errorType.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        return DiagnosticSeverity.Error;
-                    }
-
-                    if (errorType.IndexOf("warning", StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        return DiagnosticSeverity.Warning;
-                    }
-
-                    return DiagnosticSeverity.Message;
-            }
-        }
-
-        private static string GetFallbackMessage(DiagnosticSeverity severity)
-        {
-            switch (severity)
-            {
-                case DiagnosticSeverity.Error:
-                    return "Error";
-                case DiagnosticSeverity.Warning:
-                    return "Warning";
-                default:
-                    return "Message";
-            }
-        }
-
-        private static string ExtractTooltipText(object content)
-        {
-            switch (content)
-            {
-                case string s:
-                    return s;
-                case Microsoft.VisualStudio.Text.Adornments.ClassifiedTextRun run:
-                    return run.Text ?? "";
-                case Microsoft.VisualStudio.Text.Adornments.ClassifiedTextElement textElement:
-                    return string.Join("", textElement.Runs.Select(r => r.Text));
-                case Microsoft.VisualStudio.Text.Adornments.ContainerElement container:
-                    foreach (object element in container.Elements)
-                    {
-                        string text = ExtractTooltipText(element);
-                        if (!string.IsNullOrWhiteSpace(text))
-                        {
-                            return text;
-                        }
-                    }
-                    return "";
-                case null:
-                    return "";
-                default:
-                    return content.ToString();
-            }
-        }
-
-        /// <summary>
-        /// Some IErrorTag implementations (e.g. JsonErrorTag) store the message in a
-        /// "Description" property that is not part of the IErrorTag interface.
-        /// </summary>
-        private static string ExtractDescriptionViaReflection(IErrorTag tag)
-        {
-            try
-            {
-                PropertyInfo prop = tag.GetType().GetProperty("Description", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-                if (prop != null && prop.PropertyType == typeof(string))
-                {
-                    return prop.GetValue(tag) as string;
-                }
-            }
-            catch
-            {
-                // Reflection may fail for security or access reasons; fall through
-            }
-
-            return null;
-        }
-
-        private static string ExtractDiagnosticCode(string message)
-        {
-            if (string.IsNullOrWhiteSpace(message))
-            {
-                return null;
-            }
-
-            var match = System.Text.RegularExpressions.Regex.Match(message, @"^([A-Z]{2,4}\d{4,5})\s*:");
-            return match.Success ? match.Groups[1].Value : null;
-        }
-
-        private static string StripCodePrefix(string message, string code)
-        {
-            var match = System.Text.RegularExpressions.Regex.Match(message, @"^" + System.Text.RegularExpressions.Regex.Escape(code) + @"\s*:\s*");
-            if (match.Success)
-            {
-                return message.Substring(match.Length);
-            }
-
-            return message;
-        }
-
         private void OnViewClosed(object sender, EventArgs e)
         {
             Dispose();
@@ -447,17 +187,7 @@ namespace DocumentHealth
             {
                 _isDisposed = true;
                 _view.Closed -= OnViewClosed;
-                _view.TextBuffer.Changed -= OnTextBufferChanged;
-                _aggregator.BatchedTagsChanged -= OnBatchedTagsChanged;
-
-                lock (_updateGate)
-                {
-                    _debounceCts?.Cancel();
-                    _debounceCts?.Dispose();
-                    _debounceCts = null;
-                }
-
-                _aggregator.Dispose();
+                _dataProvider.DiagnosticsUpdated -= OnDiagnosticsUpdated;
             }
         }
     }

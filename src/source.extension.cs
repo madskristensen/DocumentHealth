@@ -12,7 +12,7 @@ namespace DocumentHealth
         public const string Name = "Document Health";
         public const string Description = @"Shows an icon above the vertical scroll bar indicating if the document has any errors or warnings.";
         public const string Language = "en-US";
-        public const string Version = "1.0.900";
+        public const string Version = "1.1.901";
         public const string Author = "Mads Kristensen";
         public const string Tags = "errors, warnings, health";
         public const bool IsPreview = false;

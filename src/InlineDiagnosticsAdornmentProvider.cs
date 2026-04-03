@@ -1,10 +1,7 @@
-using System;
 using System.ComponentModel.Composition;
-using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text.Editor;
-using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Threading;
 using Microsoft.VisualStudio.Utilities;
 
@@ -21,9 +18,6 @@ namespace DocumentHealth
         [Name(AdornmentLayerName)]
         [Order(After = PredefinedAdornmentLayers.Text)]
         private AdornmentLayerDefinition _editorAdornmentLayer;
-
-        [Import]
-        internal IViewTagAggregatorFactoryService ViewTagAggregatorFactoryService = null;
 
         [Import]
         internal JoinableTaskContext JoinableTaskContext = null;
@@ -43,25 +37,35 @@ namespace DocumentHealth
                 return;
             }
 
-            ITagAggregator<IErrorTag> aggregator = ViewTagAggregatorFactoryService.CreateTagAggregator<IErrorTag>(
-                textView,
-                (TagAggregatorOptions)TagAggregatorOptions2.DeferTaggerCreation);
-
-            ITableManager errorTableManager = TableManagerProvider.GetTableManager(StandardTables.ErrorsTable);
-
-            // Get the IErrorList service for direct access to the table control
-            IErrorList errorList = null;
-            try
-            {
-                errorList = ServiceProvider.GetService(typeof(SVsErrorList)) as IErrorList;
-            }
-            catch
-            {
-                // Service may not be available
-            }
+            // Get or create the shared DiagnosticDataProvider
+            DiagnosticDataProvider dataProvider = GetOrCreateDataProvider(textView, options);
 
             textView.Properties.GetOrCreateSingletonProperty(
-                () => new InlineDiagnosticsAdornment(textView, aggregator, JoinableTaskContext.Factory, options, errorTableManager, errorList));
+                typeof(InlineDiagnosticsAdornment),
+                () => new InlineDiagnosticsAdornment(textView, options, dataProvider));
+        }
+
+        internal DiagnosticDataProvider GetOrCreateDataProvider(IWpfTextView textView, General options)
+        {
+            return textView.Properties.GetOrCreateSingletonProperty(
+                typeof(DiagnosticDataProvider),
+                () =>
+                {
+                    ITableManager errorTableManager = TableManagerProvider.GetTableManager(StandardTables.ErrorsTable);
+
+                    // Get the IErrorList service for direct access to the table control
+                    IErrorList errorList = null;
+                    try
+                    {
+                        errorList = ServiceProvider.GetService(typeof(SVsErrorList)) as IErrorList;
+                    }
+                    catch
+                    {
+                        // Service may not be available
+                    }
+
+                    return new DiagnosticDataProvider(textView, JoinableTaskContext.Factory, options, errorTableManager, errorList);
+                });
         }
     }
 }
