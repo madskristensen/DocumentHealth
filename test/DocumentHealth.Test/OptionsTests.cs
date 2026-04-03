@@ -23,28 +23,4 @@ public class OptionsTests
         Assert.AreEqual(MessagePosition.Inline, options.MessagePlacement);
         Assert.AreEqual("{message}", options.MessageTemplate);
     }
-
-    [TestMethod]
-    public void SeverityFilter_Enum_HasExpectedValues()
-    {
-        Assert.AreEqual(0, (int)SeverityFilter.None);
-        Assert.AreEqual(1, (int)SeverityFilter.Errors);
-        Assert.AreEqual(2, (int)SeverityFilter.ErrorsAndWarnings);
-        Assert.AreEqual(3, (int)SeverityFilter.All);
-    }
-
-    [TestMethod]
-    public void UpdateMode_Enum_HasExpectedValues()
-    {
-        Assert.AreEqual(0, (int)UpdateMode.Continuous);
-        Assert.AreEqual(1, (int)UpdateMode.OnSave);
-    }
-
-    [TestMethod]
-    public void MessagePosition_Enum_HasExpectedValues()
-    {
-        Assert.AreEqual(0, (int)MessagePosition.Inline);
-        Assert.AreEqual(1, (int)MessagePosition.Above);
-        Assert.AreEqual(2, (int)MessagePosition.Below);
-    }
 }

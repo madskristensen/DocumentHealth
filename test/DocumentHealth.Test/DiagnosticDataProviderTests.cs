@@ -173,4 +173,132 @@ public class DiagnosticDataProviderTests
         Assert.AreEqual("CS0246", extractedCode);
         Assert.AreEqual("The type or namespace name 'Foo' could not be found", strippedMessage);
     }
+
+    #region Regex Boundary Tests - Letters
+
+    [TestMethod]
+    public void ExtractDiagnosticCode_TwoLetterCode_ReturnsCode()
+    {
+        // Regex requires 2-4 letters - 2 is minimum valid
+        string message = "CS1234: Some message";
+
+        string result = DiagnosticDataProvider.ExtractDiagnosticCode(message);
+
+        Assert.AreEqual("CS1234", result);
+    }
+
+    [TestMethod]
+    public void ExtractDiagnosticCode_SingleLetterCode_ReturnsNull()
+    {
+        // Regex requires 2-4 letters - 1 letter should fail
+        string message = "A1234: Some message";
+
+        string result = DiagnosticDataProvider.ExtractDiagnosticCode(message);
+
+        Assert.IsNull(result);
+    }
+
+    [TestMethod]
+    public void ExtractDiagnosticCode_FiveLetterCode_ReturnsNull()
+    {
+        // Regex requires 2-4 letters - 5 letters should fail
+        string message = "ABCDE1234: Some message";
+
+        string result = DiagnosticDataProvider.ExtractDiagnosticCode(message);
+
+        Assert.IsNull(result);
+    }
+
+    [TestMethod]
+    public void ExtractDiagnosticCode_LowercaseCode_ReturnsNull()
+    {
+        // Regex requires uppercase letters
+        string message = "cs0168: Some message";
+
+        string result = DiagnosticDataProvider.ExtractDiagnosticCode(message);
+
+        Assert.IsNull(result);
+    }
+
+    #endregion
+
+    #region Regex Boundary Tests - Digits
+
+    [TestMethod]
+    public void ExtractDiagnosticCode_FourDigitCode_ReturnsCode()
+    {
+        // Regex requires 4-5 digits - 4 is minimum valid
+        string message = "CS1234: Some message";
+
+        string result = DiagnosticDataProvider.ExtractDiagnosticCode(message);
+
+        Assert.AreEqual("CS1234", result);
+    }
+
+    [TestMethod]
+    public void ExtractDiagnosticCode_ThreeDigitCode_ReturnsNull()
+    {
+        // Regex requires 4-5 digits - 3 digits should fail
+        string message = "CS123: Some message";
+
+        string result = DiagnosticDataProvider.ExtractDiagnosticCode(message);
+
+        Assert.IsNull(result);
+    }
+
+    [TestMethod]
+    public void ExtractDiagnosticCode_SixDigitCode_ReturnsNull()
+    {
+        // Regex requires 4-5 digits - 6 digits should fail
+        string message = "CS123456: Some message";
+
+        string result = DiagnosticDataProvider.ExtractDiagnosticCode(message);
+
+        Assert.IsNull(result);
+    }
+
+    #endregion
+
+    #region Regex Format Tests
+
+    [TestMethod]
+    public void ExtractDiagnosticCode_MissingColon_ReturnsNull()
+    {
+        // Regex requires colon after code
+        string message = "CS0168 Some message without colon";
+
+        string result = DiagnosticDataProvider.ExtractDiagnosticCode(message);
+
+        Assert.IsNull(result);
+    }
+
+    [TestMethod]
+    public void ExtractDiagnosticCode_SpaceBeforeColon_ReturnsCode()
+    {
+        // Regex allows optional whitespace before colon
+        string message = "CS0168 : Some message";
+
+        string result = DiagnosticDataProvider.ExtractDiagnosticCode(message);
+
+        Assert.AreEqual("CS0168", result);
+    }
+
+    #endregion
+
+    #region StripCodePrefix Edge Cases
+
+    [TestMethod]
+    public void StripCodePrefix_CodeWithoutColon_StripsCodeOnly()
+    {
+        // When code doesn't have colon, just strips the code
+        string message = "CS0168 Some message";
+        string code = "CS0168";
+
+        string result = DiagnosticDataProvider.StripCodePrefix(message, code);
+
+        Assert.AreEqual("Some message", result);
+    }
+
+    #endregion
 }
+

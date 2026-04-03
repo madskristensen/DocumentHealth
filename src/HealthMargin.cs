@@ -32,44 +32,31 @@ namespace DocumentHealth
 
         private void OnBatchedTagsChanged(object sender, BatchedTagsChangedEventArgs e)
         {
-            // Quickly count current tags to detect removals.
-            // When tags are removed (error fixed), skip the debounce for instant visual feedback.
-            int currentCount = CountTags();
-            int previousCount = _lastTagCount;
-            _lastTagCount = currentCount;
+            // Use a simple heuristic to detect likely tag removals without expensive enumeration.
+            // If we had errors before and the change spans are small relative to document size,
+            // assume tags may have been removed and update immediately for fast feedback.
+            // Otherwise, use normal debounced update.
+            bool immediate = false;
 
-            bool tagsRemoved = currentCount < previousCount;
-            ScheduleUpdate(immediate: tagsRemoved);
-        }
-
-        /// <summary>
-        /// Quickly counts the current number of error tags from the aggregator.
-        /// </summary>
-        private int CountTags()
-        {
-            try
+            if (_lastTagCount > 0)
             {
-                ITextSnapshot snapshot = _view.TextSnapshot;
-                int count = 0;
-
-                foreach (IMappingTagSpan<IErrorTag> tag in _aggregator.GetTags(new SnapshotSpan(snapshot, 0, snapshot.Length)))
+                // Check if this looks like a small edit (potential fix) rather than a large refresh
+                int changedSpanCount = 0;
+                foreach (IMappingSpan span in e.Spans)
                 {
-                    if (tag.Tag != null)
+                    changedSpanCount++;
+                    if (changedSpanCount > 5)
                     {
-                        count++;
+                        // Large batch of changes - use debounce
+                        break;
                     }
                 }
 
-                return count;
+                // Small number of changed spans when we had errors suggests a fix was applied
+                immediate = changedSpanCount > 0 && changedSpanCount <= 5;
             }
-            catch (ObjectDisposedException)
-            {
-                return 0;
-            }
-            catch (InvalidOperationException)
-            {
-                return 0;
-            }
+
+            ScheduleUpdate(immediate);
         }
 
         private void ScheduleUpdate(bool immediate = false)
@@ -105,6 +92,9 @@ namespace DocumentHealth
                 token.ThrowIfCancellationRequested();
 
                 (int errors, int warnings, int messages) = await Task.Run(() => GetErrorsAndWarnings(token), token).ConfigureAwait(false);
+
+                // Update tag count for heuristic in OnBatchedTagsChanged
+                _lastTagCount = errors + warnings + messages;
 
                 await _joinableTaskFactory.SwitchToMainThreadAsync(token);
 

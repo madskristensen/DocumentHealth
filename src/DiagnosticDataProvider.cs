@@ -175,14 +175,30 @@ namespace DocumentHealth
                 return;
             }
 
-            // Quickly count current tags to detect removals.
-            // When tags are removed (error fixed), skip the debounce for instant visual feedback.
-            int currentCount = CountErrorTags();
-            int previousCount = _lastErrorTagCount;
-            _lastErrorTagCount = currentCount;
+            // Use a simple heuristic to detect likely tag removals without expensive enumeration.
+            // If we had errors before and the change spans are small relative to document size,
+            // assume tags may have been removed and update immediately for fast feedback.
+            bool immediate = false;
 
-            bool tagsRemoved = currentCount < previousCount;
-            ScheduleUpdate(immediate: tagsRemoved);
+            if (_lastErrorTagCount > 0)
+            {
+                // Check if this looks like a small edit (potential fix) rather than a large refresh
+                int changedSpanCount = 0;
+                foreach (IMappingSpan span in e.Spans)
+                {
+                    changedSpanCount++;
+                    if (changedSpanCount > 5)
+                    {
+                        // Large batch of changes - use debounce
+                        break;
+                    }
+                }
+
+                // Small number of changed spans when we had errors suggests a fix was applied
+                immediate = changedSpanCount > 0 && changedSpanCount <= 5;
+            }
+
+            ScheduleUpdate(immediate);
         }
 
         private void OnTextBufferChanged(object sender, TextContentChangedEventArgs e)
@@ -232,43 +248,6 @@ namespace DocumentHealth
             }
 
             return count;
-        }
-
-        /// <summary>
-        /// Quickly counts the current number of error tags from the aggregator.
-        /// Used to detect tag removal without running the full update pipeline.
-        /// </summary>
-        private int CountErrorTags()
-        {
-            if (_errorTagAggregator == null || _view.IsClosed)
-            {
-                return 0;
-            }
-
-            try
-            {
-                ITextSnapshot snapshot = _view.TextSnapshot;
-                SnapshotSpan entireSpan = new SnapshotSpan(snapshot, 0, snapshot.Length);
-                int count = 0;
-
-                foreach (IMappingTagSpan<IErrorTag> tagSpan in _errorTagAggregator.GetTags(entireSpan))
-                {
-                    if (tagSpan.Tag != null)
-                    {
-                        count++;
-                    }
-                }
-
-                return count;
-            }
-            catch (ObjectDisposedException)
-            {
-                return 0;
-            }
-            catch (InvalidOperationException)
-            {
-                return 0;
-            }
         }
 
         /// <summary>
@@ -353,6 +332,14 @@ namespace DocumentHealth
                 }
 
                 _diagnosticsByLine = diagnostics;
+
+                // Update tag count for heuristic in OnErrorTagsChanged
+                int totalCount = 0;
+                foreach (LineDiagnostic diag in diagnostics.Values)
+                {
+                    totalCount += diag.Count;
+                }
+                _lastErrorTagCount = totalCount;
 
                 DiagnosticsUpdated?.Invoke(this, EventArgs.Empty);
             }
@@ -527,9 +514,10 @@ namespace DocumentHealth
                             result[lineNumber] = diag;
                         }
                     }
-                    catch (ArgumentException)
+                    catch (ArgumentException ex)
                     {
                         // Tag span may be invalid
+                        ex.Log();
                     }
                 }
             }
@@ -594,17 +582,17 @@ namespace DocumentHealth
 
                             try
                             {
-                                foreach (ITableEntriesSnapshotFactory factory in collector.Factories)
+                                collector.ForEach(factory =>
                                 {
                                     ITableEntriesSnapshot snapshot = factory.GetCurrentSnapshot();
 
                                     if (snapshot == null)
                                     {
-                                        continue;
+                                        return;
                                     }
 
                                     ProcessSnapshotEntries(result, snapshot, documentPath);
-                                }
+                                });
                             }
                             finally
                             {
@@ -712,13 +700,15 @@ namespace DocumentHealth
 
                 AddOrUpdateDiagnostic(result, lineNumber, severity, message, errorCode);
             }
-            catch (InvalidOperationException)
+            catch (InvalidOperationException ex)
             {
                 // Entry may have been removed during enumeration
+                ex.Log();
             }
-            catch (ArgumentException)
+            catch (ArgumentException ex)
             {
                 // Entry access failed due to invalid state
+                ex.Log();
             }
         }
 
@@ -793,13 +783,15 @@ namespace DocumentHealth
                     AddOrUpdateDiagnostic(result, lineNumber, severity, message, errorCode);
                 }
             }
-            catch (InvalidOperationException)
+            catch (InvalidOperationException ex)
             {
                 // Snapshot may have changed during enumeration
+                ex.Log();
             }
-            catch (ArgumentOutOfRangeException)
+            catch (ArgumentOutOfRangeException ex)
             {
                 // Index became invalid during enumeration
+                ex.Log();
             }
         }
 
@@ -1222,13 +1214,31 @@ namespace DocumentHealth
         private readonly List<ITableEntriesSnapshotFactory> _factories = new List<ITableEntriesSnapshotFactory>();
         private readonly object _lock = new object();
 
-        public IReadOnlyList<ITableEntriesSnapshotFactory> Factories
+        /// <summary>
+        /// Gets the number of collected factories.
+        /// </summary>
+        public int Count
         {
             get
             {
                 lock (_lock)
                 {
-                    return _factories.ToArray();
+                    return _factories.Count;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Executes an action for each factory under the lock.
+        /// This avoids allocating a copy of the list.
+        /// </summary>
+        public void ForEach(Action<ITableEntriesSnapshotFactory> action)
+        {
+            lock (_lock)
+            {
+                foreach (ITableEntriesSnapshotFactory factory in _factories)
+                {
+                    action(factory);
                 }
             }
         }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -55,6 +56,10 @@ namespace DocumentHealth
         private volatile bool _isDisposed;
         private readonly List<TextBlock> _inlineMessageAdornments = new List<TextBlock>();
 
+        // Cached visual tree references for visibility checking to avoid repeated tree walks
+        private WeakReference<DependencyObject> _cachedLayerCanvas;
+        private WeakReference<DependencyObject> _cachedLayerPanel;
+
         /// <summary>
         /// Tracks whether a diagnostic refresh is pending. Initialized to true so that
         /// the first diagnostic update after a file is opened is rendered even in OnSave mode.
@@ -78,19 +83,30 @@ namespace DocumentHealth
             // Load colors from Fonts & Colors immediately.
             RefreshBrushesFromFormatMap();
 
-            _view.LayoutChanged += OnLayoutChanged;
-            _view.Closed += OnViewClosed;
-            _view.TextBuffer.Changed += OnTextBufferChanged;
-            _view.VisualElement.LayoutUpdated += OnVisualLayoutUpdated;
-            _dataProvider.DiagnosticsUpdated += OnDiagnosticsUpdated;
-            _formatMap.FormatMappingChanged += OnFormatMappingChanged;
-
-            if (_textDocument != null)
-            {
-                _textDocument.FileActionOccurred += OnFileActionOccurred;
-            }
-
+            // Subscribe to static event first to enable cleanup on failure.
+            // This ensures we can always unsubscribe in Dispose even if later subscriptions fail.
             General.Saved += OnOptionsSaved;
+
+            try
+            {
+                _view.LayoutChanged += OnLayoutChanged;
+                _view.Closed += OnViewClosed;
+                _view.TextBuffer.Changed += OnTextBufferChanged;
+                _view.VisualElement.LayoutUpdated += OnVisualLayoutUpdated;
+                _dataProvider.DiagnosticsUpdated += OnDiagnosticsUpdated;
+                _formatMap.FormatMappingChanged += OnFormatMappingChanged;
+
+                if (_textDocument != null)
+                {
+                    _textDocument.FileActionOccurred += OnFileActionOccurred;
+                }
+            }
+            catch
+            {
+                // If any subscription fails, clean up and rethrow
+                Dispose();
+                throw;
+            }
         }
 
         private void OnOptionsSaved(General options)
@@ -399,27 +415,8 @@ namespace DocumentHealth
 
         private void RenderInlineMessage(ITextViewLine viewLine, LineDiagnostic diagnostic)
         {
-            // Apply the message template
-            string displayMessage = ApplyMessageTemplate(diagnostic);
-
-            if (diagnostic.Count > 1)
-            {
-                displayMessage += $" (+{diagnostic.Count - 1} more)";
-            }
-
-            if (_options.MessagePlacement == MessagePosition.Inline)
-            {
-                displayMessage = "  " + displayMessage;
-            }
-
-            // Truncate long messages
-            if (displayMessage.Length > 200)
-            {
-                displayMessage = displayMessage.Substring(0, 197) + "...";
-            }
-
-            // Replace line breaks with a return symbol
-            displayMessage = displayMessage.Replace("\r\n", " \u23CE ").Replace("\n", " \u23CE ").Replace("\r", " \u23CE ");
+            // Build the display message using StringBuilder to minimize allocations
+            string displayMessage = BuildDisplayMessage(diagnostic);
 
             Brush foreground = GetForegroundBrush(diagnostic.Severity);
 
@@ -542,6 +539,79 @@ namespace DocumentHealth
                 .Replace("{source}", diagnostic.Source ?? "");
 
             return result;
+        }
+
+        /// <summary>
+        /// Builds the final display message for a diagnostic, applying template, count suffix,
+        /// positioning prefix, truncation, and line break normalization.
+        /// Uses StringBuilder to minimize allocations in this hot path.
+        /// </summary>
+        private string BuildDisplayMessage(LineDiagnostic diagnostic)
+        {
+            string baseMessage = ApplyMessageTemplate(diagnostic);
+
+            // Calculate approximate capacity to avoid reallocations
+            int capacity = baseMessage.Length + 20;
+            if (_options.MessagePlacement == MessagePosition.Inline)
+            {
+                capacity += 2;
+            }
+
+            var sb = new StringBuilder(capacity);
+
+            // Add inline prefix if needed
+            if (_options.MessagePlacement == MessagePosition.Inline)
+            {
+                sb.Append("  ");
+            }
+
+            // Add the base message, replacing line breaks inline
+            for (int i = 0; i < baseMessage.Length; i++)
+            {
+                char c = baseMessage[i];
+                if (c == '\r')
+                {
+                    // Check for \r\n
+                    if (i + 1 < baseMessage.Length && baseMessage[i + 1] == '\n')
+                    {
+                        i++; // Skip the \n
+                    }
+                    sb.Append(" \u23CE ");
+                }
+                else if (c == '\n')
+                {
+                    sb.Append(" \u23CE ");
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+
+                // Check for truncation (account for suffix we may add)
+                if (sb.Length >= 197)
+                {
+                    sb.Length = 197;
+                    sb.Append("...");
+                    return sb.ToString();
+                }
+            }
+
+            // Add count suffix if multiple diagnostics on the line
+            if (diagnostic.Count > 1)
+            {
+                sb.Append(" (+");
+                sb.Append(diagnostic.Count - 1);
+                sb.Append(" more)");
+            }
+
+            // Final truncation check
+            if (sb.Length > 200)
+            {
+                sb.Length = 197;
+                sb.Append("...");
+            }
+
+            return sb.ToString();
         }
 
         /// <summary>
@@ -719,9 +789,10 @@ namespace DocumentHealth
             {
                 UpdateAdornmentVisibility();
             }
-            catch
+            catch (Exception ex)
             {
                 // Guard against unexpected visual tree states
+                ex.Log();
             }
         }
 
@@ -729,45 +800,88 @@ namespace DocumentHealth
         /// For each inline message TextBlock, checks all sibling adornment layer canvases
         /// for overlapping child elements. Hides the TextBlock if overlap is detected;
         /// restores it when the overlap clears.
+        /// 
+        /// Optimized to cache visual tree references and exit early when possible.
         /// </summary>
         private void UpdateAdornmentVisibility()
         {
-            // Walk up from any TextBlock to find the parent panel containing all adornment layers
             if (_inlineMessageAdornments.Count == 0)
             {
                 return;
             }
 
-            TextBlock firstAdornment = _inlineMessageAdornments[0];
-            DependencyObject layerCanvas = VisualTreeHelper.GetParent(firstAdornment);
+            // Try to use cached references first
+            DependencyObject layerCanvas = null;
+            DependencyObject layerPanel = null;
+
+            if (_cachedLayerCanvas != null && _cachedLayerCanvas.TryGetTarget(out layerCanvas) &&
+                _cachedLayerPanel != null && _cachedLayerPanel.TryGetTarget(out layerPanel))
+            {
+                // Verify the cached references are still valid by checking
+                // that our adornment is still a child of the cached canvas
+                TextBlock firstAdornment = _inlineMessageAdornments[0];
+                DependencyObject currentParent = VisualTreeHelper.GetParent(firstAdornment);
+                if (!ReferenceEquals(currentParent, layerCanvas))
+                {
+                    layerCanvas = null;
+                    layerPanel = null;
+                }
+            }
+
+            // Walk up the visual tree if we don't have valid cached references
             if (layerCanvas == null)
             {
-                return;
+                TextBlock firstAdornment = _inlineMessageAdornments[0];
+                layerCanvas = VisualTreeHelper.GetParent(firstAdornment);
+                if (layerCanvas == null)
+                {
+                    return;
+                }
+
+                layerPanel = VisualTreeHelper.GetParent(layerCanvas);
+                if (layerPanel == null)
+                {
+                    return;
+                }
+
+                // Cache for next time
+                _cachedLayerCanvas = new WeakReference<DependencyObject>(layerCanvas);
+                _cachedLayerPanel = new WeakReference<DependencyObject>(layerPanel);
             }
 
-            DependencyObject layerPanel = VisualTreeHelper.GetParent(layerCanvas);
-            if (layerPanel == null)
-            {
-                return;
-            }
-
-            // Collect sibling canvases (other adornment layers)
+            // Collect sibling canvases that have visible children (skip empty ones early)
             int siblingCount = VisualTreeHelper.GetChildrenCount(layerPanel);
             var siblingCanvases = new List<Canvas>(siblingCount);
+            int totalSiblingChildren = 0;
+
             for (int i = 0; i < siblingCount; i++)
             {
                 DependencyObject child = VisualTreeHelper.GetChild(layerPanel, i);
                 if (child is Canvas canvas && !ReferenceEquals(canvas, layerCanvas))
                 {
-                    siblingCanvases.Add(canvas);
+                    int canvasChildCount = VisualTreeHelper.GetChildrenCount(canvas);
+                    if (canvasChildCount > 0)
+                    {
+                        siblingCanvases.Add(canvas);
+                        totalSiblingChildren += canvasChildCount;
+                    }
                 }
             }
 
-            if (siblingCanvases.Count == 0)
+            // Early exit: if no siblings have children, all adornments are visible
+            if (siblingCanvases.Count == 0 || totalSiblingChildren == 0)
             {
+                foreach (TextBlock adornment in _inlineMessageAdornments)
+                {
+                    if (adornment.Visibility != Visibility.Visible)
+                    {
+                        adornment.Visibility = Visibility.Visible;
+                    }
+                }
                 return;
             }
 
+            // Check each adornment for overlap
             foreach (TextBlock adornment in _inlineMessageAdornments)
             {
                 double adornmentLeft = Canvas.GetLeft(adornment);
@@ -779,6 +893,7 @@ namespace DocumentHealth
                     continue;
                 }
 
+                double adornmentBottom = adornmentTop + adornmentHeight;
                 bool hasOverlap = false;
 
                 foreach (Canvas sibling in siblingCanvases)
@@ -801,16 +916,21 @@ namespace DocumentHealth
 
                         FrameworkElement sibFE = sibElement as FrameworkElement;
                         double sibHeight = sibFE != null ? (sibFE.ActualHeight > 0 ? sibFE.ActualHeight : sibFE.DesiredSize.Height) : 0;
-                        double sibWidth = sibFE != null ? (sibFE.ActualWidth > 0 ? sibFE.ActualWidth : sibFE.DesiredSize.Width) : 0;
 
                         if (sibHeight <= 0)
                         {
                             continue;
                         }
 
-                        // Check vertical overlap (same line)
-                        bool verticalOverlap = adornmentTop < sibTop + sibHeight && adornmentTop + adornmentHeight > sibTop;
+                        // Check vertical overlap (same line) first - cheaper check
+                        double sibBottom = sibTop + sibHeight;
+                        bool verticalOverlap = adornmentTop < sibBottom && adornmentBottom > sibTop;
+                        if (!verticalOverlap)
+                        {
+                            continue;
+                        }
 
+                        // Check horizontal overlap only if vertical overlap exists
                         bool horizontalOverlap;
                         if (_options.MessagePlacement == MessagePosition.Inline)
                         {
@@ -820,6 +940,7 @@ namespace DocumentHealth
                         else
                         {
                             double adornmentWidth = adornment.ActualWidth > 0 ? adornment.ActualWidth : adornment.DesiredSize.Width;
+                            double sibWidth = sibFE != null ? (sibFE.ActualWidth > 0 ? sibFE.ActualWidth : sibFE.DesiredSize.Width) : 0;
                             if (adornmentWidth <= 0 || sibWidth <= 0)
                             {
                                 continue;
@@ -829,7 +950,7 @@ namespace DocumentHealth
                             horizontalOverlap = adornmentLeft < sibLeft + sibWidth && adornmentLeft + adornmentWidth > sibLeft;
                         }
 
-                        if (verticalOverlap && horizontalOverlap)
+                        if (horizontalOverlap)
                         {
                             hasOverlap = true;
                             break;
@@ -842,7 +963,11 @@ namespace DocumentHealth
                     }
                 }
 
-                adornment.Visibility = hasOverlap ? Visibility.Collapsed : Visibility.Visible;
+                Visibility newVisibility = hasOverlap ? Visibility.Collapsed : Visibility.Visible;
+                if (adornment.Visibility != newVisibility)
+                {
+                    adornment.Visibility = newVisibility;
+                }
             }
         }
 
