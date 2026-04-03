@@ -1,5 +1,3 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
-
 namespace DocumentHealth.Test;
 
 [TestClass]
@@ -150,7 +148,7 @@ public class DiagnosticDataProviderTests
         Assert.AreEqual(message, result);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("CS0168: Message", "CS0168", "Message")]
     [DataRow("CA1000: Message", "CA1000", "Message")]
     [DataRow("IDE0001:Message", "IDE0001", "Message")]

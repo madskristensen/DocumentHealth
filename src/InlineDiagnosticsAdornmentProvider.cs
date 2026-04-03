@@ -1,5 +1,4 @@
 using System.ComponentModel.Composition;
-using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Classification;
@@ -18,10 +17,12 @@ namespace DocumentHealth
     {
         internal const string AdornmentLayerName = "DocumentHealthInlineDiagnostics";
 
+#pragma warning disable CS0169 // Field is never assigned to
         [Export(typeof(AdornmentLayerDefinition))]
         [Name(AdornmentLayerName)]
         [Order(After = PredefinedAdornmentLayers.Text)]
         private AdornmentLayerDefinition _editorAdornmentLayer;
+#pragma warning restore CS0169
 
         [Import]
         internal JoinableTaskContext JoinableTaskContext = null;

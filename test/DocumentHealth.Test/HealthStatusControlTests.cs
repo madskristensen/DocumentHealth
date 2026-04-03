@@ -1,5 +1,3 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
-
 namespace DocumentHealth.Test;
 
 [TestClass]
@@ -78,7 +76,7 @@ public class HealthStatusHelperTests
         Assert.AreEqual("1 error(s)", result);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow(0, 0, 0, "No errors or warnings")]
     [DataRow(1, 0, 0, "1 error(s)")]
     [DataRow(0, 1, 0, "1 warning(s)")]

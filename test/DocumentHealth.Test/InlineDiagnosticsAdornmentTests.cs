@@ -1,5 +1,3 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
-
 namespace DocumentHealth.Test;
 
 [TestClass]
@@ -161,7 +159,7 @@ public class InlineDiagnosticsAdornmentTests
         Assert.AreEqual("Variable 'x' is never used", result);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("{message}", "Test message", "Test message")]
     [DataRow("{code}: {message}", "Test message", "CS0001: Test message")]
     [DataRow("[{severity}] {message}", "Test message", "[Error] Test message")]
