@@ -13,7 +13,7 @@ Download this extension from the [Visual Studio Marketplace][marketplace] or get
 
 ---
 
-A lightweight Visual Studio extension that displays document health status (errors, warnings, and messages) as an icon above the vertical scroll bar.
+A lightweight Visual Studio extension that provides comprehensive document health visualization through scroll bar indicators, inline diagnostics, gutter icons, and line highlighting.
 
 ## Features
 
@@ -65,6 +65,12 @@ See diagnostic messages directly in the editor, right at the end of the line tha
 
 ![Line Highlighting](art/line-highlighting.png)
 
+Right-click on any inline diagnostic message to access a context menu with useful actions:
+
+- **Copy Diagnostic Message** — Copy the diagnostic text to the clipboard
+- **Copy Diagnostic Code** — Copy the diagnostic code (e.g., CS0168) to the clipboard
+- **Search Online** — Search for the diagnostic on Bing to find solutions
+
 #### Message Templates
 
 Customize the format of inline diagnostic messages using a template string. The default template is `{message}`, which shows just the diagnostic text.
@@ -87,12 +93,25 @@ Example templates:
 | `[{severity}] {message}` | [Warning] The variable 'x' is declared but never used |
 | `{severity} {code}: {message}` | Warning CS0168: The variable 'x' is declared but never used |
 
+### Gutter Icons
+
+Diagnostic icons appear in the editor gutter (left margin) for lines containing errors, warnings, or suggestions. The icons use the same severity-based colors as the scroll bar indicator:
+
+- 🔴 Error icon for errors
+- 🟡 Warning icon for warnings
+- ℹ️ Information icon for suggestions
+
+Right-click on any gutter icon to access the same context menu as inline diagnostics (copy message, copy code, search online).
+
+You can configure which severity levels show gutter icons in the options.
+
 ### Line Highlighting
 
 Lines with errors or warnings are highlighted with a subtle background tint colored by severity:
 
 - **Red** tint for errors
-- **Yellow** tint for warning
+- **Yellow** tint for warnings
+- **Blue** tint for suggestions (when enabled)
 
 Both features can be toggled independently in the options.
 
@@ -100,22 +119,31 @@ Both features can be toggled independently in the options.
 
 Configure the extension under **Tools → Options → Environment → Document Health**:
 
+### Behavior
+
 | Option | Description | Default |
 |--------|-------------|---------|
 | Update delay (ms) | Delay before updating the indicator after changes. Higher values improve performance during rapid typing. | 250 |
 | Show messages count | Include suggestions and informational messages in the tooltip count. | true |
 | Replace built-in indicator | Disable Visual Studio's built-in file health indicator and use this extension's indicator instead. | true |
+
+### Inline Diagnostics
+
+| Option | Description | Default |
+|--------|-------------|---------|
 | Show inline messages | Display diagnostic messages inline at the end of lines containing errors or warnings. | true |
+| Show gutter icons | Controls which severity levels get gutter icons in the editor margin. Options: None, Errors, Errors and Warnings, All. | Errors and Warnings |
 | Show errors | Include error diagnostics in the inline messages and line highlights. | true |
 | Show warnings | Include warning diagnostics in the inline messages and line highlights. | true |
 | Show suggestions | Include informational and suggestion diagnostics in the inline messages and line highlights. | false |
-| Highlight lines | Controls which severity levels get line background highlighting. | Errors and Warnings |
+| Highlight lines | Controls which severity levels get line background highlighting. Options: None, Errors, Errors and Warnings, All. | Errors and Warnings |
 | Message template | Customize the format of inline messages using placeholders: `{message}`, `{code}`, `{severity}`, `{source}`. | `{message}` |
 
 ### Notes on behavior
 
-- The indicator now performs an initial health calculation when a document opens.
+- The indicator performs an initial health calculation when a document opens.
 - Updates use debounce behavior, so rapid typing delays refresh until activity settles.
+- Gutter icons and inline messages share the same context menu for quick access to diagnostic actions.
 
 ## How Can I Help?
 
