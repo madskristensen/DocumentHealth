@@ -236,7 +236,7 @@ namespace DocumentHealth
                 }
 
                 // Build error list cache on UI thread
-                Dictionary<ErrorListKey, string> errorListCache = BuildErrorListCache();
+                Dictionary<ErrorListKey, ErrorListData> errorListCache = BuildErrorListCache();
 
                 // Now run diagnostic collection on background thread with the cache
                 var collectResult = await System.Threading.Tasks.Task.Run(
@@ -274,7 +274,7 @@ namespace DocumentHealth
             }
         }
 
-        private (Dictionary<int, LineDiagnostic> Diagnostics, bool HasPendingErrorListLookups) CollectDiagnostics(CancellationToken token, Dictionary<ErrorListKey, string> errorListCache)
+        private (Dictionary<int, LineDiagnostic> Diagnostics, bool HasPendingErrorListLookups) CollectDiagnostics(CancellationToken token, Dictionary<ErrorListKey, ErrorListData> errorListCache)
         {
             var result = new Dictionary<int, LineDiagnostic>();
             bool hasPendingLookups = false;
@@ -308,6 +308,7 @@ namespace DocumentHealth
 
                     string message = ExtractTooltipText(tagSpan.Tag.ToolTipContent);
                     bool neededErrorListLookup = false;
+                    ErrorListData errorListData = null;
 
                     if (string.IsNullOrWhiteSpace(message))
                     {
@@ -318,7 +319,8 @@ namespace DocumentHealth
                     if (string.IsNullOrWhiteSpace(message))
                     {
                         neededErrorListLookup = true;
-                        message = GetMessageFromErrorListCache(errorListCache, documentPath, lineNumber, severity);
+                        errorListData = GetDataFromErrorListCache(errorListCache, documentPath, lineNumber, severity);
+                        message = errorListData?.Message;
                     }
 
                     // If we still don't have a message and needed error list lookup,
@@ -338,6 +340,12 @@ namespace DocumentHealth
                     if (!string.IsNullOrEmpty(diagnosticCode))
                     {
                         message = StripCodePrefix(message, diagnosticCode);
+                    }
+
+                    // If we couldn't extract code from the message but have it from error list, use that
+                    if (string.IsNullOrEmpty(diagnosticCode) && errorListData != null)
+                    {
+                        diagnosticCode = errorListData.ErrorCode;
                     }
 
                     string source = null;
@@ -722,9 +730,9 @@ namespace DocumentHealth
         /// Builds a cache of error list entries for the current document.
         /// Must be called on the UI thread.
         /// </summary>
-        private Dictionary<ErrorListKey, string> BuildErrorListCache()
+        private Dictionary<ErrorListKey, ErrorListData> BuildErrorListCache()
         {
-            var cache = new Dictionary<ErrorListKey, string>();
+            var cache = new Dictionary<ErrorListKey, ErrorListData>();
 
             try
             {
@@ -808,7 +816,7 @@ namespace DocumentHealth
         /// <summary>
         /// Adds a single entry (ITableEntryHandle) to the cache if it matches the document path.
         /// </summary>
-        private static void AddEntryToCache(Dictionary<ErrorListKey, string> cache, ITableEntryHandle entry, string documentPath)
+        private static void AddEntryToCache(Dictionary<ErrorListKey, ErrorListData> cache, ITableEntryHandle entry, string documentPath)
         {
             try
             {
@@ -861,7 +869,16 @@ namespace DocumentHealth
                     // Only add if not already present (first entry wins)
                     if (!cache.ContainsKey(key))
                     {
-                        cache[key] = message;
+                        // Also try to get the error code
+                        string errorCode = null;
+                        if (entry.TryGetValue(StandardTableKeyNames.ErrorCode, out object errorCodeObj) &&
+                            errorCodeObj is string code &&
+                            !string.IsNullOrWhiteSpace(code))
+                        {
+                            errorCode = code;
+                        }
+
+                        cache[key] = new ErrorListData(message, errorCode);
                     }
                 }
             }
@@ -874,7 +891,7 @@ namespace DocumentHealth
         /// <summary>
         /// Adds entries from a snapshot to the cache for matching document path.
         /// </summary>
-        private static void AddSnapshotEntriesToCache(Dictionary<ErrorListKey, string> cache, ITableEntriesSnapshot snapshot, string documentPath)
+        private static void AddSnapshotEntriesToCache(Dictionary<ErrorListKey, ErrorListData> cache, ITableEntriesSnapshot snapshot, string documentPath)
         {
             try
             {
@@ -915,7 +932,16 @@ namespace DocumentHealth
                         // Only add if not already present (first entry wins)
                         if (!cache.ContainsKey(key))
                         {
-                            cache[key] = message;
+                            // Also try to get the error code
+                            string errorCode = null;
+                            if (snapshot.TryGetValue(i, StandardTableKeyNames.ErrorCode, out object errorCodeObj) &&
+                                errorCodeObj is string code &&
+                                !string.IsNullOrWhiteSpace(code))
+                            {
+                                errorCode = code;
+                            }
+
+                            cache[key] = new ErrorListData(message, errorCode);
                         }
                     }
                 }
@@ -927,11 +953,11 @@ namespace DocumentHealth
         }
 
         /// <summary>
-        /// Gets a message from the pre-built error list cache.
+        /// Gets data from the pre-built error list cache.
         /// Thread-safe - can be called from any thread.
         /// </summary>
-        private static string GetMessageFromErrorListCache(
-            Dictionary<ErrorListKey, string> cache,
+        private static ErrorListData GetDataFromErrorListCache(
+            Dictionary<ErrorListKey, ErrorListData> cache,
             string documentPath,
             int lineNumber,
             DiagnosticSeverity severity)
@@ -943,7 +969,7 @@ namespace DocumentHealth
 
             var key = new ErrorListKey(documentPath, lineNumber, severity);
 
-            return cache.TryGetValue(key, out string message) ? message : null;
+            return cache.TryGetValue(key, out ErrorListData data) ? data : null;
         }
 
         /// <summary>
@@ -1050,6 +1076,21 @@ namespace DocumentHealth
                 hash = hash * 31 + (int)Severity;
                 return hash;
             }
+        }
+    }
+
+    /// <summary>
+    /// Data retrieved from the Error List for a diagnostic entry.
+    /// </summary>
+    internal sealed class ErrorListData
+    {
+        public string Message { get; }
+        public string ErrorCode { get; }
+
+        public ErrorListData(string message, string errorCode)
+        {
+            Message = message;
+            ErrorCode = errorCode;
         }
     }
 
