@@ -18,6 +18,7 @@ namespace DocumentHealth
         private readonly object _updateGate = new();
         private volatile bool _isDisposed;
         private CancellationTokenSource _debounceCts;
+        private volatile int _lastTagCount;
 
         public HealthMargin(IWpfTextView textView, ITagAggregator<IErrorTag> aggregator, JoinableTaskFactory joinableTaskFactory, General options)
         {
@@ -31,7 +32,44 @@ namespace DocumentHealth
 
         private void OnBatchedTagsChanged(object sender, BatchedTagsChangedEventArgs e)
         {
-            ScheduleUpdate();
+            // Quickly count current tags to detect removals.
+            // When tags are removed (error fixed), skip the debounce for instant visual feedback.
+            int currentCount = CountTags();
+            int previousCount = _lastTagCount;
+            _lastTagCount = currentCount;
+
+            bool tagsRemoved = currentCount < previousCount;
+            ScheduleUpdate(immediate: tagsRemoved);
+        }
+
+        /// <summary>
+        /// Quickly counts the current number of error tags from the aggregator.
+        /// </summary>
+        private int CountTags()
+        {
+            try
+            {
+                ITextSnapshot snapshot = _view.TextSnapshot;
+                int count = 0;
+
+                foreach (IMappingTagSpan<IErrorTag> tag in _aggregator.GetTags(new SnapshotSpan(snapshot, 0, snapshot.Length)))
+                {
+                    if (tag.Tag != null)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
+            catch (ObjectDisposedException)
+            {
+                return 0;
+            }
+            catch (InvalidOperationException)
+            {
+                return 0;
+            }
         }
 
         private void ScheduleUpdate(bool immediate = false)

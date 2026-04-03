@@ -38,6 +38,9 @@ namespace DocumentHealth
         private readonly object _updateGate = new object();
         private CancellationTokenSource _debounceCts;
 
+        // Tracks the last known error tag count so we can detect removals quickly
+        private volatile int _lastErrorTagCount;
+
         // Cached diagnostic data per line number
         private Dictionary<int, LineDiagnostic> _diagnosticsByLine = new Dictionary<int, LineDiagnostic>();
 
@@ -168,10 +171,14 @@ namespace DocumentHealth
                 return;
             }
 
-            // Use debounced update to avoid excessive UI thread work during rapid typing.
-            // Roslyn fires batched tag changes frequently; immediate updates here would
-            // bypass the debounce and cause typing lag in large files.
-            ScheduleUpdate();
+            // Quickly count current tags to detect removals.
+            // When tags are removed (error fixed), skip the debounce for instant visual feedback.
+            int currentCount = CountErrorTags();
+            int previousCount = _lastErrorTagCount;
+            _lastErrorTagCount = currentCount;
+
+            bool tagsRemoved = currentCount < previousCount;
+            ScheduleUpdate(immediate: tagsRemoved);
         }
 
         private void OnTextBufferChanged(object sender, TextContentChangedEventArgs e)
@@ -221,6 +228,43 @@ namespace DocumentHealth
             }
 
             return count;
+        }
+
+        /// <summary>
+        /// Quickly counts the current number of error tags from the aggregator.
+        /// Used to detect tag removal without running the full update pipeline.
+        /// </summary>
+        private int CountErrorTags()
+        {
+            if (_errorTagAggregator == null || _view.IsClosed)
+            {
+                return 0;
+            }
+
+            try
+            {
+                ITextSnapshot snapshot = _view.TextSnapshot;
+                SnapshotSpan entireSpan = new SnapshotSpan(snapshot, 0, snapshot.Length);
+                int count = 0;
+
+                foreach (IMappingTagSpan<IErrorTag> tagSpan in _errorTagAggregator.GetTags(entireSpan))
+                {
+                    if (tagSpan.Tag != null)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
+            catch (ObjectDisposedException)
+            {
+                return 0;
+            }
+            catch (InvalidOperationException)
+            {
+                return 0;
+            }
         }
 
         /// <summary>
