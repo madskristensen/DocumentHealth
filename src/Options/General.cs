@@ -25,8 +25,8 @@ namespace DocumentHealth
         [Category("Inline Diagnostics")]
         [DisplayName("Update mode")]
         [Description("Controls when inline diagnostics are refreshed. 'Continuous' updates as you type (default). 'OnSave' only updates after the file is saved.")]
-        [DefaultValue(UpdateMode.Continuous)]
-        public UpdateMode UpdateMode { get; set; } = UpdateMode.Continuous;
+        [DefaultValue(UpdateMode.OnSave)]
+        public UpdateMode UpdateMode { get; set; } = UpdateMode.OnSave;
 
         [Category("Inline Diagnostics")]
         [DisplayName("Show inline messages")]

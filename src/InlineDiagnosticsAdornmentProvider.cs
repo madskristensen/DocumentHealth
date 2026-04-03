@@ -2,6 +2,7 @@ using System.ComponentModel.Composition;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text;
+using Microsoft.VisualStudio.Text.Classification;
 using Microsoft.VisualStudio.Text.Differencing;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Tagging;
@@ -37,6 +38,9 @@ namespace DocumentHealth
         [Import]
         internal ITextDocumentFactoryService TextDocumentFactoryService = null;
 
+        [Import]
+        internal IEditorFormatMapService EditorFormatMapService = null;
+
         public void TextViewCreated(IWpfTextView textView)
         {
             if (textView.Roles.Contains(DifferenceViewerRoles.DiffTextViewRole))
@@ -56,9 +60,11 @@ namespace DocumentHealth
 
             TextDocumentFactoryService.TryGetTextDocument(textView.TextBuffer, out ITextDocument textDocument);
 
+            IEditorFormatMap formatMap = EditorFormatMapService.GetEditorFormatMap(textView);
+
             textView.Properties.GetOrCreateSingletonProperty(
                 typeof(InlineDiagnosticsAdornment),
-                () => new InlineDiagnosticsAdornment(textView, options, dataProvider, textDocument));
+                () => new InlineDiagnosticsAdornment(textView, options, dataProvider, textDocument, formatMap));
         }
     }
 }

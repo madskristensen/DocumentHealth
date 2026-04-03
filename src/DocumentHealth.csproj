@@ -47,6 +47,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="DiagnosticDataProvider.cs" />
+    <Compile Include="DiagnosticFormatDefinitions.cs" />
     <Compile Include="DiagnosticGlyphTagger.cs" />
     <Compile Include="DiagnosticGlyphTag.cs" />
     <Compile Include="DiagnosticGlyphFactory.cs" />

@@ -113,6 +113,18 @@ Lines with errors or warnings are highlighted with a subtle background tint colo
 
 Both features can be toggled independently in the options.
 
+### Customizable Colors
+
+All diagnostic colors can be customized through Visual Studio's native **Tools → Options → Environment → Fonts and Colors** page. Look for the **Document Health** items:
+
+| Display Item | Foreground (inline text) | Background (line highlight) | Default Color |
+|---|---|---|---|
+| Document Health - Error | Inline error message color | Error line highlight | Red (`#E45454`) |
+| Document Health - Warning | Inline warning message color | Warning line highlight | Orange (`#FF942F`) |
+| Document Health - Message | Inline info message color | Info line highlight | Blue (`#00B7E4`) |
+
+Each entry also exposes **Bold** and **Italic** options for the inline message font style. Colors update live when changed — no restart required.
+
 ## Options
 
 Configure the extension under **Tools → Options → Environment → Document Health**:

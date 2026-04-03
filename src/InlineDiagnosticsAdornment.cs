@@ -6,10 +6,10 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text;
+using Microsoft.VisualStudio.Text.Classification;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Formatting;
 using Microsoft.VisualStudio.Text.Tagging;
-using Microsoft.VisualStudio.Threading;
 
 namespace DocumentHealth
 {
@@ -23,13 +23,33 @@ namespace DocumentHealth
         private readonly General _options;
         private readonly DiagnosticDataProvider _dataProvider;
         private readonly ITextDocument _textDocument;
+        private readonly IEditorFormatMap _formatMap;
 
-        private static readonly Brush _errorBackground;
-        private static readonly Brush _warningBackground;
-        private static readonly Brush _messageBackground;
-        private static readonly Brush _errorForeground;
-        private static readonly Brush _warningForeground;
-        private static readonly Brush _messageForeground;
+        /// <summary>
+        /// Foreground opacity applied to inline message text brushes.
+        /// </summary>
+        private const double ForegroundOpacity = 0.8;
+
+        /// <summary>
+        /// Background opacity applied to line highlight brushes.
+        /// </summary>
+        private const double BackgroundOpacity = 0.15;
+
+        // Instance-level brushes loaded from Fonts & Colors settings.
+        private Brush _errorBackground;
+        private Brush _warningBackground;
+        private Brush _messageBackground;
+        private Brush _errorForeground;
+        private Brush _warningForeground;
+        private Brush _messageForeground;
+
+        // Font weight and style from Fonts & Colors (per severity).
+        private FontWeight _errorFontWeight;
+        private FontWeight _warningFontWeight;
+        private FontWeight _messageFontWeight;
+        private System.Windows.FontStyle _errorFontStyle;
+        private System.Windows.FontStyle _warningFontStyle;
+        private System.Windows.FontStyle _messageFontStyle;
 
         private volatile bool _isDisposed;
         private readonly List<TextBlock> _inlineMessageAdornments = new List<TextBlock>();
@@ -40,48 +60,126 @@ namespace DocumentHealth
         /// </summary>
         private volatile bool _pendingSaveRender = true;
 
-        static InlineDiagnosticsAdornment()
-        {
-            _errorBackground = new SolidColorBrush(Color.FromArgb(0x26, 0xE4, 0x54, 0x54));
-            _errorBackground.Freeze();
-            _warningBackground = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0x94, 0x2F));
-            _warningBackground.Freeze();
-            _messageBackground = new SolidColorBrush(Color.FromArgb(0x20, 0x00, 0xB7, 0xE4));
-            _messageBackground.Freeze();
-
-            _errorForeground = new SolidColorBrush(Color.FromArgb(0xCC, 0xE4, 0x54, 0x54));
-            _errorForeground.Freeze();
-            _warningForeground = new SolidColorBrush(Color.FromArgb(0xCC, 0xFF, 0x94, 0x2F));
-            _warningForeground.Freeze();
-            _messageForeground = new SolidColorBrush(Color.FromArgb(0xCC, 0x00, 0xB7, 0xE4));
-            _messageForeground.Freeze();
-        }
-
         public InlineDiagnosticsAdornment(
             IWpfTextView view,
             General options,
             DiagnosticDataProvider dataProvider,
-            ITextDocument textDocument)
+            ITextDocument textDocument,
+            IEditorFormatMap formatMap)
         {
             _view = view;
             _layer = view.GetAdornmentLayer(InlineDiagnosticsAdornmentProvider.AdornmentLayerName);
             _options = options;
             _dataProvider = dataProvider;
             _textDocument = textDocument;
+            _formatMap = formatMap;
+
+            // Load colors from Fonts & Colors immediately.
+            RefreshBrushesFromFormatMap();
 
             _view.LayoutChanged += OnLayoutChanged;
             _view.Closed += OnViewClosed;
             _view.TextBuffer.Changed += OnTextBufferChanged;
             _view.VisualElement.LayoutUpdated += OnVisualLayoutUpdated;
             _dataProvider.DiagnosticsUpdated += OnDiagnosticsUpdated;
+            _formatMap.FormatMappingChanged += OnFormatMappingChanged;
 
             if (_textDocument != null)
             {
                 _textDocument.FileActionOccurred += OnFileActionOccurred;
             }
+        }
 
-            // Initial render
-            RenderAdornments();
+        /// <summary>
+        /// Called when the user changes any Fonts and Colors entry that we use.
+        /// </summary>
+        private void OnFormatMappingChanged(object sender, FormatItemsEventArgs e)
+        {
+            if (_isDisposed)
+            {
+                return;
+            }
+
+            if (e.ChangedItems.Contains(DiagnosticFormatDefinitions.ErrorFormat) ||
+                e.ChangedItems.Contains(DiagnosticFormatDefinitions.WarningFormat) ||
+                e.ChangedItems.Contains(DiagnosticFormatDefinitions.MessageFormat))
+            {
+                RefreshBrushesFromFormatMap();
+                RenderAdornments();
+            }
+        }
+
+        /// <summary>
+        /// Reads colors and font styles from the editor format map.
+        /// Each severity has a single format entry whose foreground is used for
+        /// inline text and whose background is used for line highlights.
+        /// </summary>
+        private void RefreshBrushesFromFormatMap()
+        {
+            ReadFormat(DiagnosticFormatDefinitions.ErrorFormat,
+                out _errorForeground, out _errorBackground, out _errorFontWeight, out _errorFontStyle);
+            ReadFormat(DiagnosticFormatDefinitions.WarningFormat,
+                out _warningForeground, out _warningBackground, out _warningFontWeight, out _warningFontStyle);
+            ReadFormat(DiagnosticFormatDefinitions.MessageFormat,
+                out _messageForeground, out _messageBackground, out _messageFontWeight, out _messageFontStyle);
+        }
+
+        /// <summary>
+        /// Reads foreground (inline text), background (line highlight), and font
+        /// style from a single Fonts and Colors entry.
+        /// </summary>
+        private void ReadFormat(string formatName,
+            out Brush foreground, out Brush background,
+            out FontWeight fontWeight, out System.Windows.FontStyle fontStyle)
+        {
+            System.Windows.ResourceDictionary props = _formatMap.GetProperties(formatName);
+
+            // Foreground → inline text color
+            if (props.Contains(EditorFormatDefinition.ForegroundBrushId) &&
+                props[EditorFormatDefinition.ForegroundBrushId] is SolidColorBrush fgBrush)
+            {
+                foreground = CreateFrozenBrush(fgBrush.Color, ForegroundOpacity);
+            }
+            else if (props.Contains(EditorFormatDefinition.ForegroundColorId) &&
+                     props[EditorFormatDefinition.ForegroundColorId] is Color fgColor)
+            {
+                foreground = CreateFrozenBrush(fgColor, ForegroundOpacity);
+            }
+            else
+            {
+                foreground = CreateFrozenBrush(Colors.Gray, ForegroundOpacity);
+            }
+
+            // Background → line highlight color
+            if (props.Contains(EditorFormatDefinition.BackgroundBrushId) &&
+                props[EditorFormatDefinition.BackgroundBrushId] is SolidColorBrush bgBrush)
+            {
+                background = CreateFrozenBrush(bgBrush.Color, BackgroundOpacity);
+            }
+            else if (props.Contains(EditorFormatDefinition.BackgroundColorId) &&
+                     props[EditorFormatDefinition.BackgroundColorId] is Color bgColor)
+            {
+                background = CreateFrozenBrush(bgColor, BackgroundOpacity);
+            }
+            else
+            {
+                background = CreateFrozenBrush(Colors.Gray, BackgroundOpacity);
+            }
+
+            fontWeight = props.Contains("IsBold") && props["IsBold"] is bool bold && bold
+                ? FontWeights.Bold
+                : FontWeights.Normal;
+
+            fontStyle = props.Contains("IsItalic") && props["IsItalic"] is bool italic && italic
+                ? FontStyles.Italic
+                : FontStyles.Normal;
+        }
+
+        private static Brush CreateFrozenBrush(Color color, double opacity)
+        {
+            var brush = new SolidColorBrush(color) { Opacity = opacity };
+            brush.Freeze();
+            return brush;
         }
 
         private void OnFileActionOccurred(object sender, TextDocumentFileActionEventArgs e)
@@ -237,9 +335,9 @@ namespace DocumentHealth
                 Foreground = foreground,
                 FontSize = _view.FormattedLineSource.DefaultTextProperties.FontRenderingEmSize * 0.9,
                 FontFamily = _view.FormattedLineSource.DefaultTextProperties.Typeface.FontFamily,
-                FontStyle = FontStyles.Italic,
+                FontStyle = GetFontStyle(diagnostic.Severity),
+                FontWeight = GetFontWeight(diagnostic.Severity),
                 IsHitTestVisible = true,
-                Opacity = 0.8,
                 Tag = diagnostic,
                 Cursor = System.Windows.Input.Cursors.Arrow,
             };
@@ -327,7 +425,7 @@ namespace DocumentHealth
             }
         }
 
-        private static Brush GetBackgroundBrush(DiagnosticSeverity severity)
+        private Brush GetBackgroundBrush(DiagnosticSeverity severity)
         {
             switch (severity)
             {
@@ -337,13 +435,33 @@ namespace DocumentHealth
             }
         }
 
-        private static Brush GetForegroundBrush(DiagnosticSeverity severity)
+        private Brush GetForegroundBrush(DiagnosticSeverity severity)
         {
             switch (severity)
             {
                 case DiagnosticSeverity.Error: return _errorForeground;
                 case DiagnosticSeverity.Warning: return _warningForeground;
                 default: return _messageForeground;
+            }
+        }
+
+        private FontWeight GetFontWeight(DiagnosticSeverity severity)
+        {
+            switch (severity)
+            {
+                case DiagnosticSeverity.Error: return _errorFontWeight;
+                case DiagnosticSeverity.Warning: return _warningFontWeight;
+                default: return _messageFontWeight;
+            }
+        }
+
+        private System.Windows.FontStyle GetFontStyle(DiagnosticSeverity severity)
+        {
+            switch (severity)
+            {
+                case DiagnosticSeverity.Error: return _errorFontStyle;
+                case DiagnosticSeverity.Warning: return _warningFontStyle;
+                default: return _messageFontStyle;
             }
         }
 
@@ -489,6 +607,7 @@ namespace DocumentHealth
                 _view.TextBuffer.Changed -= OnTextBufferChanged;
                 _view.VisualElement.LayoutUpdated -= OnVisualLayoutUpdated;
                 _dataProvider.DiagnosticsUpdated -= OnDiagnosticsUpdated;
+                _formatMap.FormatMappingChanged -= OnFormatMappingChanged;
 
                 if (_textDocument != null)
                 {
