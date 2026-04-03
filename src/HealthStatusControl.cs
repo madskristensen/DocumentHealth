@@ -107,7 +107,7 @@ namespace DocumentHealth
             }
 
             _image.Moniker = GetMoniker(errors, warnings);
-            System.Windows.Automation.AutomationProperties.SetName(_image, GetAccessibleText(errors, warnings, messages));
+            System.Windows.Automation.AutomationProperties.SetName(_image, HealthStatusHelper.GetAccessibleText(errors, warnings, messages));
 
             // Update tooltip labels
             _errorLabel.Content = errors.ToString();
@@ -117,29 +117,6 @@ namespace DocumentHealth
             _currentErrors = errors;
             _currentWarnings = warnings;
             _currentMessages = messages;
-        }
-
-        private static string GetAccessibleText(int errors, int warnings, int messages)
-        {
-            if (errors == 0 && warnings == 0 && messages == 0)
-            {
-                return _noIssuesText;
-            }
-
-            var parts = new System.Collections.Generic.List<string>(3);
-            if (errors > 0)
-            {
-                parts.Add(string.Format(_errorsText, errors));
-            }
-            if (warnings > 0)
-            {
-                parts.Add(string.Format(_warningsText, warnings));
-            }
-            if (messages > 0)
-            {
-                parts.Add(string.Format(_messagesText, messages));
-            }
-            return string.Join(", ", parts);
         }
 
         private ImageMoniker GetMoniker(int errors, int warnings)

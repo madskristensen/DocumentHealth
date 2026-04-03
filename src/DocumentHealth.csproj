@@ -56,6 +56,7 @@
     <Compile Include="DiagnosticLineTransformSourceProvider.cs" />
     <Compile Include="HealthMargin.cs" />
     <Compile Include="HealthMarginProvider.cs" />
+    <Compile Include="HealthStatusHelper.cs" />
     <Compile Include="InlineDiagnosticsAdornment.cs" />
     <Compile Include="InlineDiagnosticsAdornmentProvider.cs" />
     <Compile Include="Options\General.cs" />

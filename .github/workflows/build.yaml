@@ -51,6 +51,17 @@ jobs:
     - name: Build
       run: msbuild /v:m -restore /p:OutDir=\_built
 
+    - name: Run tests
+      run: dotnet vstest /_built/DocumentHealth.Test.dll --logger "trx;LogFileName=test-results.trx"
+
+    - name: Report test results
+      uses: dorny/test-reporter@v3
+      if: ${{ always() && (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      with:
+        name: Test Results
+        path: '**/test-results.trx'
+        reporter: dotnet-trx
+
     - name: Upload artifact
       uses: actions/upload-artifact@v7
       with:

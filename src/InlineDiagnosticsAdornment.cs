@@ -558,6 +558,18 @@ namespace DocumentHealth
             }
         }
 
+        /// <summary>
+        /// Internal helper for testing message template formatting.
+        /// </summary>
+        internal static string FormatMessage(string template, string message, string code, DiagnosticSeverity severity, string source)
+        {
+            return (template ?? "{message}")
+                .Replace("{message}", message ?? "")
+                .Replace("{code}", code ?? "")
+                .Replace("{severity}", GetSeverityLabel(severity))
+                .Replace("{source}", source ?? "");
+        }
+
         private bool ShouldHighlight(DiagnosticSeverity severity)
         {
             switch (_options.HighlightLines)
