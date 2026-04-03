@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using Microsoft.VisualStudio.Imaging;
 using Microsoft.VisualStudio.Imaging.Interop;
+using Microsoft.VisualStudio.Text.Differencing;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Formatting;
 using Microsoft.VisualStudio.Text.Tagging;
@@ -20,6 +21,11 @@ namespace DocumentHealth
     {
         public IGlyphFactory GetGlyphFactory(IWpfTextView view, IWpfTextViewMargin margin)
         {
+            if (view.Roles.Contains(DifferenceViewerRoles.DiffTextViewRole))
+            {
+                return null;
+            }
+
             return new DiagnosticGlyphFactory();
         }
     }

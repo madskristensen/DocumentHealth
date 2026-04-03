@@ -1,4 +1,5 @@
 using System.ComponentModel.Composition;
+using Microsoft.VisualStudio.Text.Differencing;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Threading;
@@ -24,6 +25,11 @@ namespace DocumentHealth
 
         public IWpfTextViewMargin CreateMargin(IWpfTextViewHost wpfTextViewHost, IWpfTextViewMargin marginContainer)
         {
+            if (wpfTextViewHost.TextView.Roles.Contains(DifferenceViewerRoles.DiffTextViewRole))
+            {
+                return null;
+            }
+
             // Optionally disable File Health Indicator from showing up in the bottom left editor margin
             if (General.Instance.ReplaceBuiltInIndicator)
             {

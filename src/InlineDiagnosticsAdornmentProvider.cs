@@ -2,6 +2,7 @@ using System.ComponentModel.Composition;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text;
+using Microsoft.VisualStudio.Text.Differencing;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Threading;
@@ -38,6 +39,11 @@ namespace DocumentHealth
 
         public void TextViewCreated(IWpfTextView textView)
         {
+            if (textView.Roles.Contains(DifferenceViewerRoles.DiffTextViewRole))
+            {
+                return;
+            }
+
             General options = General.Instance;
 
             if (!options.ShowInlineMessages && options.HighlightLines == SeverityFilter.None)

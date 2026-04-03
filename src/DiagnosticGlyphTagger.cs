@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text;
+using Microsoft.VisualStudio.Text.Differencing;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Threading;
@@ -30,6 +31,11 @@ namespace DocumentHealth
         public ITagger<T> CreateTagger<T>(ITextView textView, ITextBuffer buffer) where T : ITag
         {
             if (textView.TextBuffer != buffer)
+            {
+                return null;
+            }
+
+            if (textView.Roles.Contains(DifferenceViewerRoles.DiffTextViewRole))
             {
                 return null;
             }
