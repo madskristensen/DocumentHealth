@@ -31,6 +31,7 @@ namespace DocumentHealth
         private static readonly Brush _messageForeground;
 
         private volatile bool _isDisposed;
+        private readonly List<TextBlock> _inlineMessageAdornments = new List<TextBlock>();
 
         static InlineDiagnosticsAdornment()
         {
@@ -62,6 +63,7 @@ namespace DocumentHealth
             _view.LayoutChanged += OnLayoutChanged;
             _view.Closed += OnViewClosed;
             _view.TextBuffer.Changed += OnTextBufferChanged;
+            _view.VisualElement.LayoutUpdated += OnVisualLayoutUpdated;
             _dataProvider.DiagnosticsUpdated += OnDiagnosticsUpdated;
 
             // Initial render
@@ -110,6 +112,7 @@ namespace DocumentHealth
             }
 
             _layer.RemoveAllAdornments();
+            _inlineMessageAdornments.Clear();
 
             IReadOnlyDictionary<int, LineDiagnostic> diagnosticsByLine = _dataProvider.DiagnosticsByLine;
             if (diagnosticsByLine.Count == 0)
@@ -231,6 +234,8 @@ namespace DocumentHealth
                 tag: null,
                 adornment: textBlock,
                 removedCallback: null);
+
+            _inlineMessageAdornments.Add(textBlock);
         }
 
         /// <summary>
@@ -300,6 +305,133 @@ namespace DocumentHealth
             }
         }
 
+        /// <summary>
+        /// Called when the WPF visual tree updates layout. Checks whether any of our inline
+        /// message adornments overlap with elements on sibling adornment layers (e.g. Copilot
+        /// ghost text) and hides them to avoid visual clutter.
+        /// </summary>
+        private void OnVisualLayoutUpdated(object sender, EventArgs e)
+        {
+            if (_isDisposed || _view.IsClosed || _inlineMessageAdornments.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                UpdateAdornmentVisibility();
+            }
+            catch
+            {
+                // Guard against unexpected visual tree states
+            }
+        }
+
+        /// <summary>
+        /// For each inline message TextBlock, checks all sibling adornment layer canvases
+        /// for overlapping child elements. Hides the TextBlock if overlap is detected;
+        /// restores it when the overlap clears.
+        /// </summary>
+        private void UpdateAdornmentVisibility()
+        {
+            // Walk up from any TextBlock to find the parent panel containing all adornment layers
+            if (_inlineMessageAdornments.Count == 0)
+            {
+                return;
+            }
+
+            TextBlock firstAdornment = _inlineMessageAdornments[0];
+            DependencyObject layerCanvas = VisualTreeHelper.GetParent(firstAdornment);
+            if (layerCanvas == null)
+            {
+                return;
+            }
+
+            DependencyObject layerPanel = VisualTreeHelper.GetParent(layerCanvas);
+            if (layerPanel == null)
+            {
+                return;
+            }
+
+            // Collect sibling canvases (other adornment layers)
+            int siblingCount = VisualTreeHelper.GetChildrenCount(layerPanel);
+            var siblingCanvases = new List<Canvas>(siblingCount);
+            for (int i = 0; i < siblingCount; i++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(layerPanel, i);
+                if (child is Canvas canvas && !ReferenceEquals(canvas, layerCanvas))
+                {
+                    siblingCanvases.Add(canvas);
+                }
+            }
+
+            if (siblingCanvases.Count == 0)
+            {
+                return;
+            }
+
+            foreach (TextBlock adornment in _inlineMessageAdornments)
+            {
+                double adornmentLeft = Canvas.GetLeft(adornment);
+                double adornmentTop = Canvas.GetTop(adornment);
+                double adornmentHeight = adornment.ActualHeight > 0 ? adornment.ActualHeight : adornment.DesiredSize.Height;
+
+                if (adornmentHeight <= 0)
+                {
+                    continue;
+                }
+
+                bool hasOverlap = false;
+
+                foreach (Canvas sibling in siblingCanvases)
+                {
+                    int childCount = VisualTreeHelper.GetChildrenCount(sibling);
+                    for (int i = 0; i < childCount; i++)
+                    {
+                        DependencyObject sibChild = VisualTreeHelper.GetChild(sibling, i);
+                        if (!(sibChild is UIElement sibElement) || sibElement.Visibility != Visibility.Visible)
+                        {
+                            continue;
+                        }
+
+                        double sibTop = Canvas.GetTop(sibElement);
+                        double sibLeft = Canvas.GetLeft(sibElement);
+                        if (double.IsNaN(sibTop) || double.IsNaN(sibLeft))
+                        {
+                            continue;
+                        }
+
+                        FrameworkElement sibFE = sibElement as FrameworkElement;
+                        double sibHeight = sibFE != null ? (sibFE.ActualHeight > 0 ? sibFE.ActualHeight : sibFE.DesiredSize.Height) : 0;
+
+                        if (sibHeight <= 0)
+                        {
+                            continue;
+                        }
+
+                        // Check vertical overlap (same line)
+                        bool verticalOverlap = adornmentTop < sibTop + sibHeight && adornmentTop + adornmentHeight > sibTop;
+
+                        // Check horizontal overlap (sibling starts at or after line text end, overlapping our adornment)
+                        bool horizontalOverlap = sibLeft >= adornmentLeft - 20;
+
+                        if (verticalOverlap && horizontalOverlap)
+                        {
+                            hasOverlap = true;
+                            break;
+                        }
+                    }
+
+                    if (hasOverlap)
+                    {
+                        break;
+                    }
+                }
+
+                adornment.Visibility = hasOverlap ? Visibility.Collapsed : Visibility.Visible;
+            }
+        }
+
         private void OnViewClosed(object sender, EventArgs e)
         {
             Dispose();
@@ -313,6 +445,7 @@ namespace DocumentHealth
                 _view.LayoutChanged -= OnLayoutChanged;
                 _view.Closed -= OnViewClosed;
                 _view.TextBuffer.Changed -= OnTextBufferChanged;
+                _view.VisualElement.LayoutUpdated -= OnVisualLayoutUpdated;
                 _dataProvider.DiagnosticsUpdated -= OnDiagnosticsUpdated;
             }
         }
