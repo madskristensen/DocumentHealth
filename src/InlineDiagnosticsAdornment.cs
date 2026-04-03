@@ -213,18 +213,72 @@ namespace DocumentHealth
                     return;
                 }
 
-                // Don't consume the flag when diagnostics are empty.
-                // For C# files, the initial update fires before Roslyn has
-                // finished analyzing, so the first DiagnosticsUpdated arrives
-                // with an empty set.  Keep the flag so the next update (once
-                // Roslyn produces tags) still renders.
-                if (_dataProvider.DiagnosticsByLine.Count > 0)
+                // Don't consume the flag until diagnostics are actually renderable.
+                // For C# files, early updates can contain line diagnostics without
+                // hydrated message text yet. Consuming the flag too early prevents
+                // the later hydration update from rendering the message.
+                if (HasRenderableDiagnostics())
                 {
                     _pendingSaveRender = false;
                 }
+                else
+                {
+                    return;
+                }
+            }
+
+            // For Above/Below placement, force the view to re-format lines so
+            // the line transform source is re-queried with updated diagnostics.
+            // This causes OnLayoutChanged → RenderAdornments to run with the
+            // correct expanded line heights.
+            if (_options.MessagePlacement != MessagePosition.Inline &&
+                _options.ShowInlineMessages &&
+                !_view.IsClosed && !_view.InLayout &&
+                _view.TextViewLines != null &&
+                _view.TextViewLines.FirstVisibleLine != null)
+            {
+                ITextViewLine firstVisible = _view.TextViewLines.FirstVisibleLine;
+                _view.DisplayTextLineContainingBufferPosition(
+                    firstVisible.Start,
+                    firstVisible.Top - _view.ViewportTop,
+                    ViewRelativePosition.Top);
+
+                // Render immediately as a fallback in case the forced reformat does not
+                // produce a LayoutChanged payload that triggers rendering.
+                RenderAdornments();
+                return;
             }
 
             RenderAdornments();
+        }
+
+        /// <summary>
+        /// Returns true when the current diagnostics are ready for user-visible rendering.
+        /// In OnSave mode we keep waiting until this is true so we don't lock in highlight-only output.
+        /// </summary>
+        private bool HasRenderableDiagnostics()
+        {
+            IReadOnlyDictionary<int, LineDiagnostic> diagnosticsByLine = _dataProvider.DiagnosticsByLine;
+            if (diagnosticsByLine.Count == 0)
+            {
+                return false;
+            }
+
+            if (!_options.ShowInlineMessages)
+            {
+                return true;
+            }
+
+            foreach (LineDiagnostic diagnostic in diagnosticsByLine.Values)
+            {
+                string displayMessage = ApplyMessageTemplate(diagnostic);
+                if (!string.IsNullOrWhiteSpace(displayMessage))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void OnTextBufferChanged(object sender, TextContentChangedEventArgs e)
@@ -308,16 +362,32 @@ namespace DocumentHealth
         {
             Brush background = GetBackgroundBrush(diagnostic.Severity);
 
+            double fontSize = _view.FormattedLineSource.DefaultTextProperties.FontRenderingEmSize;
+            double messageBandHeight = (fontSize * 0.9) + 4;
+            double highlightTop = viewLine.TextTop;
+            double highlightHeight = viewLine.TextHeight;
+
+            if (_options.MessagePlacement == MessagePosition.Above)
+            {
+                highlightTop = viewLine.TextTop - messageBandHeight;
+                highlightHeight = messageBandHeight;
+            }
+            else if (_options.MessagePlacement == MessagePosition.Below)
+            {
+                highlightTop = viewLine.TextBottom;
+                highlightHeight = messageBandHeight;
+            }
+
             var highlight = new Border
             {
                 Background = background,
                 Width = Math.Max(_view.ViewportWidth, viewLine.Width),
-                Height = viewLine.Height,
+                Height = highlightHeight,
                 IsHitTestVisible = false,
             };
 
             Canvas.SetLeft(highlight, _view.ViewportLeft);
-            Canvas.SetTop(highlight, viewLine.Top);
+            Canvas.SetTop(highlight, highlightTop);
 
             _layer.AddAdornment(
                 AdornmentPositioningBehavior.TextRelative,
@@ -337,7 +407,10 @@ namespace DocumentHealth
                 displayMessage += $" (+{diagnostic.Count - 1} more)";
             }
 
-            displayMessage = "  " + displayMessage;
+            if (_options.MessagePlacement == MessagePosition.Inline)
+            {
+                displayMessage = "  " + displayMessage;
+            }
 
             // Truncate long messages
             if (displayMessage.Length > 200)
@@ -385,10 +458,33 @@ namespace DocumentHealth
                 contextMenu.IsOpen = true;
             };
 
-            double left = viewLine.TextRight + 20;
+            double left;
+            double top;
+
+            MessagePosition placement = _options.MessagePlacement;
+
+            if (placement == MessagePosition.Above)
+            {
+                // Align with the first non-whitespace character on the line
+                left = GetIndentLeft(viewLine);
+                double fontSize = _view.FormattedLineSource.DefaultTextProperties.FontRenderingEmSize;
+                double messageHeight = fontSize * 0.9;
+                top = viewLine.TextTop - messageHeight - 2;
+            }
+            else if (placement == MessagePosition.Below)
+            {
+                left = GetIndentLeft(viewLine);
+                top = viewLine.TextBottom + 2;
+            }
+            else
+            {
+                // Inline: position at end of text
+                left = viewLine.TextRight + 20;
+                top = viewLine.TextTop;
+            }
 
             Canvas.SetLeft(textBlock, left);
-            Canvas.SetTop(textBlock, viewLine.TextTop);
+            Canvas.SetTop(textBlock, top);
 
             _layer.AddAdornment(
                 AdornmentPositioningBehavior.TextRelative,
@@ -398,6 +494,36 @@ namespace DocumentHealth
                 removedCallback: null);
 
             _inlineMessageAdornments.Add(textBlock);
+        }
+
+        /// <summary>
+        /// Gets the horizontal position of the first non-whitespace character on the
+        /// view line, so above/below messages align with the code indentation.
+        /// </summary>
+        private double GetIndentLeft(ITextViewLine viewLine)
+        {
+            ITextSnapshotLine snapshotLine = _view.TextSnapshot.GetLineFromPosition(viewLine.Start.Position);
+            string lineText = snapshotLine.GetText();
+            int firstNonWhitespace = 0;
+
+            while (firstNonWhitespace < lineText.Length && char.IsWhiteSpace(lineText[firstNonWhitespace]))
+            {
+                firstNonWhitespace++;
+            }
+
+            if (firstNonWhitespace >= snapshotLine.Length)
+            {
+                return viewLine.TextLeft;
+            }
+
+            SnapshotPoint indentPoint = snapshotLine.Start + firstNonWhitespace;
+
+            if (indentPoint >= viewLine.Start && indentPoint <= viewLine.End)
+            {
+                return viewLine.GetCharacterBounds(indentPoint).Left;
+            }
+
+            return viewLine.TextLeft;
         }
 
         /// <summary>
@@ -567,6 +693,16 @@ namespace DocumentHealth
                 return;
             }
 
+            if (_options.MessagePlacement != MessagePosition.Inline)
+            {
+                foreach (TextBlock adornment in _inlineMessageAdornments)
+                {
+                    adornment.Visibility = Visibility.Visible;
+                }
+
+                return;
+            }
+
             try
             {
                 UpdateAdornmentVisibility();
@@ -653,6 +789,7 @@ namespace DocumentHealth
 
                         FrameworkElement sibFE = sibElement as FrameworkElement;
                         double sibHeight = sibFE != null ? (sibFE.ActualHeight > 0 ? sibFE.ActualHeight : sibFE.DesiredSize.Height) : 0;
+                        double sibWidth = sibFE != null ? (sibFE.ActualWidth > 0 ? sibFE.ActualWidth : sibFE.DesiredSize.Width) : 0;
 
                         if (sibHeight <= 0)
                         {
@@ -662,8 +799,23 @@ namespace DocumentHealth
                         // Check vertical overlap (same line)
                         bool verticalOverlap = adornmentTop < sibTop + sibHeight && adornmentTop + adornmentHeight > sibTop;
 
-                        // Check horizontal overlap (sibling starts at or after line text end, overlapping our adornment)
-                        bool horizontalOverlap = sibLeft >= adornmentLeft - 20;
+                        bool horizontalOverlap;
+                        if (_options.MessagePlacement == MessagePosition.Inline)
+                        {
+                            // Inline: sibling starts at or after line text end and overlaps our message.
+                            horizontalOverlap = sibLeft >= adornmentLeft - 20;
+                        }
+                        else
+                        {
+                            double adornmentWidth = adornment.ActualWidth > 0 ? adornment.ActualWidth : adornment.DesiredSize.Width;
+                            if (adornmentWidth <= 0 || sibWidth <= 0)
+                            {
+                                continue;
+                            }
+
+                            // Above/Below: hide on actual bounding-box intersection.
+                            horizontalOverlap = adornmentLeft < sibLeft + sibWidth && adornmentLeft + adornmentWidth > sibLeft;
+                        }
 
                         if (verticalOverlap && horizontalOverlap)
                         {

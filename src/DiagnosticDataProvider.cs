@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -45,6 +46,9 @@ namespace DocumentHealth
         private Dictionary<int, LineDiagnostic> _diagnosticsByLine = new Dictionary<int, LineDiagnostic>();
 
         private volatile bool _isSubscribedToErrorList;
+        private int _initialErrorListRetryCount;
+
+        private const int MaxInitialErrorListRetries = 6;
 
         /// <summary>
         /// Raised when diagnostic data has been updated. Subscribers should re-render.
@@ -320,9 +324,28 @@ namespace DocumentHealth
                     return;
                 }
 
+                // Error List services can be initialized after this provider is created
+                // during solution load. Retry event hookup when we're on the UI thread.
+                SubscribeToErrorListChanges();
+
                 // Enhance with Error List data
                 Dictionary<int, LineDiagnostic> errorListDiagnostics = CollectDiagnosticsFromErrorList();
                 MergeDiagnostics(diagnostics, errorListDiagnostics);
+
+                // During solution/open-file startup there is a race where tags exist before
+                // Error List entries for the same document are materialized. Retry a few times
+                // so we can hydrate full messages/codes without requiring a close/reopen.
+                if (diagnostics.Count > 0 &&
+                    errorListDiagnostics.Count == 0 &&
+                    _initialErrorListRetryCount < MaxInitialErrorListRetries)
+                {
+                    _initialErrorListRetryCount++;
+                    ScheduleUpdate();
+                }
+                else if (errorListDiagnostics.Count > 0)
+                {
+                    _initialErrorListRetryCount = MaxInitialErrorListRetries;
+                }
 
                 if (_isDisposed || token.IsCancellationRequested)
                 {
@@ -621,8 +644,9 @@ namespace DocumentHealth
                     return;
                 }
 
-                // Compare document paths (case-insensitive on Windows)
-                if (!string.Equals(entryDocPath, documentPath, StringComparison.OrdinalIgnoreCase))
+                // Compare document identity robustly. Some language services report only file names,
+                // URI-style paths, or transient monikers before the file is saved.
+                if (!IsCurrentDocument(entryDocPath, documentPath))
                 {
                     return;
                 }
@@ -716,8 +740,9 @@ namespace DocumentHealth
                         continue;
                     }
 
-                    // Compare document paths (case-insensitive on Windows)
-                    if (!string.Equals(entryDocPath, documentPath, StringComparison.OrdinalIgnoreCase))
+                    // Compare document identity robustly. Some language services report only file names,
+                    // URI-style paths, or transient monikers before the file is saved.
+                    if (!IsCurrentDocument(entryDocPath, documentPath))
                     {
                         continue;
                     }
@@ -929,6 +954,53 @@ namespace DocumentHealth
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Determines whether an Error List document moniker refers to the current document.
+        /// </summary>
+        private static bool IsCurrentDocument(string entryDocumentPath, string currentDocumentPath)
+        {
+            if (string.IsNullOrWhiteSpace(entryDocumentPath) || string.IsNullOrWhiteSpace(currentDocumentPath))
+            {
+                return false;
+            }
+
+            string normalizedEntryPath = NormalizeDocumentPath(entryDocumentPath);
+            string normalizedCurrentPath = NormalizeDocumentPath(currentDocumentPath);
+
+            if (string.Equals(normalizedEntryPath, normalizedCurrentPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // Some diagnostics only report a file name before the document is saved.
+            // Fall back to file name matching in that case.
+            string entryFileName = Path.GetFileName(normalizedEntryPath);
+            string currentFileName = Path.GetFileName(normalizedCurrentPath);
+
+            return !string.IsNullOrEmpty(entryFileName)
+                && string.Equals(entryFileName, currentFileName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Normalizes common Error List document moniker formats for reliable comparisons.
+        /// </summary>
+        private static string NormalizeDocumentPath(string path)
+        {
+            string normalized = path.Trim();
+
+            if (normalized.EndsWith("*", StringComparison.Ordinal))
+            {
+                normalized = normalized.Substring(0, normalized.Length - 1).TrimEnd();
+            }
+
+            if (Uri.TryCreate(normalized, UriKind.Absolute, out Uri uri) && uri.IsFile)
+            {
+                normalized = uri.LocalPath;
+            }
+
+            return normalized;
         }
 
         /// <summary>

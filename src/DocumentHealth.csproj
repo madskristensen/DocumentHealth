@@ -52,6 +52,8 @@
     <Compile Include="DiagnosticGlyphTag.cs" />
     <Compile Include="DiagnosticGlyphFactory.cs" />
     <Compile Include="DiagnosticContextMenu.cs" />
+    <Compile Include="DiagnosticLineTransformSource.cs" />
+    <Compile Include="DiagnosticLineTransformSourceProvider.cs" />
     <Compile Include="HealthMargin.cs" />
     <Compile Include="HealthMarginProvider.cs" />
     <Compile Include="InlineDiagnosticsAdornment.cs" />

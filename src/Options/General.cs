@@ -65,6 +65,12 @@ namespace DocumentHealth
         public SeverityFilter HighlightLines { get; set; } = SeverityFilter.ErrorsAndWarnings;
 
         [Category("Inline Diagnostics")]
+        [DisplayName("Message placement")]
+        [Description("Controls where inline diagnostic messages are rendered relative to the affected line. 'Inline' places them at the end of the line (default). 'Above' renders them on a separate line above the code. 'Below' renders them on a separate line below the code.")]
+        [DefaultValue(MessagePosition.Inline)]
+        public MessagePosition MessagePlacement { get; set; } = MessagePosition.Inline;
+
+        [Category("Inline Diagnostics")]
         [DisplayName("Message template")]
         [Description("Customize the format of inline diagnostic messages. Supported placeholders: {message} (diagnostic text), {code} (diagnostic ID), {severity} (Error/Warning/Info), {source} (analyzer name).")]
         [DefaultValue("{message}")]
@@ -86,5 +92,12 @@ namespace DocumentHealth
     {
         Continuous,
         OnSave,
+    }
+
+    public enum MessagePosition
+    {
+        Inline,
+        Above,
+        Below,
     }
 }
