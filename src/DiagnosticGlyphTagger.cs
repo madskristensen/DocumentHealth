@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using Microsoft.VisualStudio.Shell.TableManager;
@@ -63,12 +64,18 @@ namespace DocumentHealth
 
     internal sealed class DiagnosticGlyphTagger : ITagger<DiagnosticGlyphTag>, IDisposable
     {
+        private const int OnSaveContinuousGraceMilliseconds = 1500;
+
         private readonly ITextView _view;
         private readonly General _options;
         private readonly DiagnosticDataProvider _dataProvider;
+        private readonly ITextDocument _textDocument;
 
         private volatile bool _isDisposed;
-        private int _lastDiagnosticCount;
+        private volatile bool _pendingSaveRefresh = true;
+        private DateTime _onSaveContinuousUntilUtc = DateTime.MinValue;
+        private readonly HashSet<int> _visibleLineNumbersOnSave = new HashSet<int>();
+        private readonly HashSet<int> _publishedLineNumbers = new HashSet<int>();
 
         public event EventHandler<SnapshotSpanEventArgs> TagsChanged;
 
@@ -80,6 +87,12 @@ namespace DocumentHealth
             _view = view;
             _options = options;
             _dataProvider = dataProvider;
+
+            if (_view.TextBuffer.Properties.TryGetProperty(typeof(ITextDocument), out ITextDocument textDocument))
+            {
+                _textDocument = textDocument;
+                _textDocument.FileActionOccurred += OnFileActionOccurred;
+            }
 
             _dataProvider.DiagnosticsUpdated += OnDiagnosticsUpdated;
             _view.Closed += OnViewClosed;
@@ -96,13 +109,52 @@ namespace DocumentHealth
                 return;
             }
 
-            int newCount = _dataProvider.DiagnosticsByLine.Count;
+            IReadOnlyDictionary<int, LineDiagnostic> diagnosticsByLine = _dataProvider.DiagnosticsByLine;
 
-            // Only fire if there's actually a change
-            if (newCount != _lastDiagnosticCount || newCount > 0)
+            if (_options.UpdateMode == UpdateMode.OnSave)
             {
-                _lastDiagnosticCount = newCount;
+                bool shouldRaise;
+
+                if (_pendingSaveRefresh)
+                {
+                    _pendingSaveRefresh = false;
+                    shouldRaise = ReplaceLineSet(_visibleLineNumbersOnSave, diagnosticsByLine);
+                }
+                else if (IsWithinOnSaveContinuousGracePeriod())
+                {
+                    shouldRaise = ReplaceLineSet(_visibleLineNumbersOnSave, diagnosticsByLine);
+                }
+                else
+                {
+                    shouldRaise = RemoveResolvedLineNumbers(_visibleLineNumbersOnSave, diagnosticsByLine);
+                }
+
+                if (shouldRaise)
+                {
+                    FireTagsChangedOnUIThreadAsync().FireAndForget();
+                }
+
+                return;
+            }
+
+            if (ReplaceLineSet(_publishedLineNumbers, diagnosticsByLine))
+            {
                 FireTagsChangedOnUIThreadAsync().FireAndForget();
+            }
+        }
+
+        private void OnFileActionOccurred(object sender, TextDocumentFileActionEventArgs e)
+        {
+            if (_isDisposed || _view.IsClosed)
+            {
+                return;
+            }
+
+            if (e.FileActionType == FileActionTypes.ContentSavedToDisk)
+            {
+                _pendingSaveRefresh = true;
+                _onSaveContinuousUntilUtc = DateTime.UtcNow.AddMilliseconds(OnSaveContinuousGraceMilliseconds);
+                _dataProvider.ScheduleUpdate(immediate: true);
             }
         }
 
@@ -142,6 +194,11 @@ namespace DocumentHealth
 
                 for (int line = startLine; line <= endLine; line++)
                 {
+                    if (_options.UpdateMode == UpdateMode.OnSave && !_visibleLineNumbersOnSave.Contains(line))
+                    {
+                        continue;
+                    }
+
                     if (diagnosticsByLine.TryGetValue(line, out LineDiagnostic diagnostic) && ShouldShowGlyph(diagnostic.Severity))
                     {
                         ITextSnapshotLine snapshotLine = snapshot.GetLineFromLineNumber(line);
@@ -173,6 +230,73 @@ namespace DocumentHealth
             Dispose();
         }
 
+        private static bool ReplaceLineSet(HashSet<int> target, IReadOnlyDictionary<int, LineDiagnostic> diagnosticsByLine)
+        {
+            if (target.Count != diagnosticsByLine.Count)
+            {
+                target.Clear();
+
+                foreach (KeyValuePair<int, LineDiagnostic> diagnostic in diagnosticsByLine)
+                {
+                    target.Add(diagnostic.Key);
+                }
+
+                return true;
+            }
+
+            foreach (KeyValuePair<int, LineDiagnostic> diagnostic in diagnosticsByLine)
+            {
+                if (!target.Contains(diagnostic.Key))
+                {
+                    target.Clear();
+
+                    foreach (KeyValuePair<int, LineDiagnostic> updatedDiagnostic in diagnosticsByLine)
+                    {
+                        target.Add(updatedDiagnostic.Key);
+                    }
+
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsWithinOnSaveContinuousGracePeriod()
+        {
+            return DateTime.UtcNow <= _onSaveContinuousUntilUtc;
+        }
+
+        private static bool RemoveResolvedLineNumbers(HashSet<int> target, IReadOnlyDictionary<int, LineDiagnostic> diagnosticsByLine)
+        {
+            if (target.Count == 0)
+            {
+                return false;
+            }
+
+            var resolvedLineNumbers = new List<int>();
+
+            foreach (int lineNumber in target)
+            {
+                if (!diagnosticsByLine.ContainsKey(lineNumber))
+                {
+                    resolvedLineNumbers.Add(lineNumber);
+                }
+            }
+
+            if (resolvedLineNumbers.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (int lineNumber in resolvedLineNumbers)
+            {
+                target.Remove(lineNumber);
+            }
+
+            return true;
+        }
+
         public void Dispose()
         {
             if (!_isDisposed)
@@ -180,6 +304,11 @@ namespace DocumentHealth
                 _isDisposed = true;
                 _view.Closed -= OnViewClosed;
                 _dataProvider.DiagnosticsUpdated -= OnDiagnosticsUpdated;
+
+                if (_textDocument != null)
+                {
+                    _textDocument.FileActionOccurred -= OnFileActionOccurred;
+                }
             }
         }
     }

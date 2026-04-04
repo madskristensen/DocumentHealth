@@ -66,6 +66,13 @@ namespace DocumentHealth
         /// </summary>
         private volatile bool _pendingSaveRender = true;
 
+        private const int OnSaveContinuousGraceMilliseconds = 1500;
+        private DateTime _onSaveContinuousUntilUtc = DateTime.MinValue;
+
+        // In OnSave mode, this stores the set of line numbers currently allowed to render.
+        // New diagnostics are only added on save; resolved diagnostics are removed immediately.
+        private readonly HashSet<int> _visibleLineNumbersOnSave = new HashSet<int>();
+
         public InlineDiagnosticsAdornment(
             IWpfTextView view,
             General options,
@@ -216,7 +223,8 @@ namespace DocumentHealth
             if (e.FileActionType == FileActionTypes.ContentSavedToDisk)
             {
                 _pendingSaveRender = true;
-                RenderAdornments();
+                _onSaveContinuousUntilUtc = DateTime.UtcNow.AddMilliseconds(OnSaveContinuousGraceMilliseconds);
+                _dataProvider.ScheduleUpdate(immediate: true);
             }
         }
 
@@ -224,20 +232,33 @@ namespace DocumentHealth
         {
             if (_options.UpdateMode == UpdateMode.OnSave)
             {
-                if (!_pendingSaveRender)
-                {
-                    return;
-                }
+                IReadOnlyDictionary<int, LineDiagnostic> diagnosticsByLine = _dataProvider.DiagnosticsByLine;
+                bool shouldRender;
 
-                // Don't consume the flag until diagnostics are actually renderable.
-                // For C# files, early updates can contain line diagnostics without
-                // hydrated message text yet. Consuming the flag too early prevents
-                // the later hydration update from rendering the message.
-                if (HasRenderableDiagnostics())
+                if (_pendingSaveRender)
                 {
+                    // Don't consume the flag until diagnostics are actually renderable.
+                    // For C# files, early updates can contain line diagnostics without
+                    // hydrated message text yet. Consuming the flag too early prevents
+                    // the later hydration update from rendering the message.
+                    if (diagnosticsByLine.Count > 0 && !HasRenderableDiagnostics())
+                    {
+                        return;
+                    }
+
                     _pendingSaveRender = false;
+                    shouldRender = ReplaceVisibleLineNumbers(diagnosticsByLine);
+                }
+                else if (IsWithinOnSaveContinuousGracePeriod())
+                {
+                    shouldRender = ReplaceVisibleLineNumbers(diagnosticsByLine);
                 }
                 else
+                {
+                    shouldRender = RemoveResolvedLineNumbers(diagnosticsByLine);
+                }
+
+                if (!shouldRender)
                 {
                     return;
                 }
@@ -310,6 +331,7 @@ namespace DocumentHealth
             {
                 _layer.RemoveAllAdornments();
                 _inlineMessageAdornments.Clear();
+                _visibleLineNumbersOnSave.Clear();
                 return;
             }
 
@@ -351,11 +373,22 @@ namespace DocumentHealth
                 return;
             }
 
+            bool filterByOnSaveLines = _options.UpdateMode == UpdateMode.OnSave;
+            if (filterByOnSaveLines && _visibleLineNumbersOnSave.Count == 0)
+            {
+                return;
+            }
+
             ITextSnapshot snapshot = _view.TextSnapshot;
 
             foreach (ITextViewLine viewLine in _view.TextViewLines)
             {
                 int lineNumber = snapshot.GetLineNumberFromPosition(viewLine.Start.Position);
+
+                if (filterByOnSaveLines && !_visibleLineNumbersOnSave.Contains(lineNumber))
+                {
+                    continue;
+                }
 
                 if (!diagnosticsByLine.TryGetValue(lineNumber, out LineDiagnostic diagnostic))
                 {
@@ -372,6 +405,72 @@ namespace DocumentHealth
                     RenderInlineMessage(viewLine, diagnostic);
                 }
             }
+        }
+
+        private bool ReplaceVisibleLineNumbers(IReadOnlyDictionary<int, LineDiagnostic> diagnosticsByLine)
+        {
+            if (_visibleLineNumbersOnSave.Count == diagnosticsByLine.Count)
+            {
+                bool hasDifference = false;
+
+                foreach (KeyValuePair<int, LineDiagnostic> diagnostic in diagnosticsByLine)
+                {
+                    if (!_visibleLineNumbersOnSave.Contains(diagnostic.Key))
+                    {
+                        hasDifference = true;
+                        break;
+                    }
+                }
+
+                if (!hasDifference)
+                {
+                    return false;
+                }
+            }
+
+            _visibleLineNumbersOnSave.Clear();
+
+            foreach (KeyValuePair<int, LineDiagnostic> diagnostic in diagnosticsByLine)
+            {
+                _visibleLineNumbersOnSave.Add(diagnostic.Key);
+            }
+
+            return true;
+        }
+
+        private bool RemoveResolvedLineNumbers(IReadOnlyDictionary<int, LineDiagnostic> diagnosticsByLine)
+        {
+            if (_visibleLineNumbersOnSave.Count == 0)
+            {
+                return false;
+            }
+
+            var resolvedLineNumbers = new List<int>();
+
+            foreach (int lineNumber in _visibleLineNumbersOnSave)
+            {
+                if (!diagnosticsByLine.ContainsKey(lineNumber))
+                {
+                    resolvedLineNumbers.Add(lineNumber);
+                }
+            }
+
+            if (resolvedLineNumbers.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (int lineNumber in resolvedLineNumbers)
+            {
+                _visibleLineNumbersOnSave.Remove(lineNumber);
+            }
+
+            return true;
+        }
+
+        private bool IsWithinOnSaveContinuousGracePeriod()
+        {
+            return DateTime.UtcNow <= _onSaveContinuousUntilUtc;
         }
 
         private void RenderLineHighlight(ITextViewLine viewLine, LineDiagnostic diagnostic)
