@@ -103,6 +103,8 @@ Diagnostic icons appear in the editor gutter (left margin) for lines containing 
 
 Right-click on any gutter icon to access the same context menu as inline diagnostics (copy message, copy code, search online, display toggles).
 
+![Glyphs and messages](art/glyphs-and-messages.png)
+
 You can configure which severity levels show gutter icons in the options.
 
 ### Line Highlighting
