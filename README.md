@@ -11,9 +11,26 @@ Download this extension from the [Visual Studio Marketplace][marketplace] or get
 
 ---
 
-A lightweight Visual Studio extension that provides comprehensive document health visualization through scroll bar indicators, inline diagnostics, gutter icons, and line highlighting.
+A lightweight Visual Studio extension that focuses on inline error/warning messages and margin glyphs (gutter icons), with optional line highlighting and an icon on the scroll bar for at-a-glance status.
 
 ## Features
+
+### Inline Error Messages + Margin Glyphs
+
+See diagnostic messages directly in the editor:
+
+- **Inline messages** render at the end of the affected line (default)
+- **Above / Below** positions render on a separate line above or below the affected code
+
+![Glyphs and messages](art/glyphs-and-messages.png)
+
+You also get **margin glyphs** (gutter icons) for lines containing diagnostics, using severity-based coloring:
+
+- 🔴 Error
+- 🟡 Warning
+- ℹ️ Information (suggestions)
+
+Right-click an inline message or gutter icon to copy diagnostic text/code, search online, or quickly toggle display options.
 
 ### At-a-Glance Status Indicator
 
@@ -60,9 +77,15 @@ You can also **click the icon** to jump to the next error, or **right-click** to
 
 ### Inline Diagnostics
 
-See diagnostic messages directly in the editor, right at the end of the line that caused them — no need to check the Error List.
+See diagnostic messages directly in the editor, right at/near the line that caused them — no need to check the Error List.
 
 ![Line Highlighting](art/line-highlighting.png)
+
+Message placement can be configured as:
+
+- **Inline**: at the end of the affected line (default)
+- **Above**: rendered on a separate line above the code, aligned to indentation
+- **Below**: rendered on a separate line below the code
 
 Right-click on any inline diagnostic message to access a context menu with useful actions:
 
@@ -102,8 +125,6 @@ Diagnostic icons appear in the editor gutter (left margin) for lines containing 
 - ℹ️ Information icon for suggestions
 
 Right-click on any gutter icon to access the same context menu as inline diagnostics (copy message, copy code, search online, display toggles).
-
-![Glyphs and messages](art/glyphs-and-messages.png)
 
 You can configure which severity levels show gutter icons in the options.
 
@@ -151,6 +172,7 @@ Configure the extension under **Tools → Options → Environment → Document H
 | Update delay (ms)          | Delay before updating the indicator after changes. Higher values improve performance during rapid typing. | 250     |
 | Show messages count        | Include suggestions and informational messages in the tooltip count.                                      | true    |
 | Replace built-in indicator | Disable Visual Studio's built-in file health indicator and use this extension's indicator instead.        | true    |
+| Update mode               | Controls when inline diagnostics are refreshed. 'Continuous' updates as you type, while 'OnSave' only updates after the file is saved. | OnSave |
 
 ### Inline Diagnostics
 
@@ -162,6 +184,7 @@ Configure the extension under **Tools → Options → Environment → Document H
 | Show warnings        | Include warning diagnostics in the inline messages and line highlights.                                                | true                |
 | Show suggestions     | Include informational and suggestion diagnostics in the inline messages and line highlights.                           | false               |
 | Highlight lines      | Controls which severity levels get line background highlighting. Options: None, Errors, Errors and Warnings, All.      | Errors and Warnings |
+| Message placement   | Controls where inline diagnostic messages are rendered relative to the affected line. Options: Inline (end of line), Above (separate line above), Below (separate line below). | Inline |
 | Message template     | Customize the format of inline messages using placeholders: `{message}`, `{code}`, `{severity}`, `{source}`.           | `{message}`         |
 
 ### Notes on behavior
