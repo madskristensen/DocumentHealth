@@ -65,6 +65,7 @@ namespace DocumentHealth
     internal sealed class DiagnosticGlyphTagger : ITagger<DiagnosticGlyphTag>, IDisposable
     {
         private const int OnSaveContinuousGraceMilliseconds = 1500;
+        private const int InitialLoadContinuousGraceMilliseconds = 10000;
 
         private readonly ITextView _view;
         private readonly General _options;
@@ -96,6 +97,10 @@ namespace DocumentHealth
 
             _dataProvider.DiagnosticsUpdated += OnDiagnosticsUpdated;
             _view.Closed += OnViewClosed;
+
+            // During solution restore, diagnostics can arrive shortly after the first empty refresh.
+            // Keep a short startup grace window so late Roslyn diagnostics can still be added.
+            _onSaveContinuousUntilUtc = DateTime.UtcNow.AddMilliseconds(InitialLoadContinuousGraceMilliseconds);
 
             // Fire an initial TagsChanged to ensure the tagger is registered with the glyph margin.
             // This must happen on the UI thread after the view is fully initialized.

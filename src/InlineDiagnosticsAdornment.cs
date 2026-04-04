@@ -67,6 +67,7 @@ namespace DocumentHealth
         private volatile bool _pendingSaveRender = true;
 
         private const int OnSaveContinuousGraceMilliseconds = 1500;
+        private const int InitialLoadContinuousGraceMilliseconds = 10000;
         private DateTime _onSaveContinuousUntilUtc = DateTime.MinValue;
 
         // In OnSave mode, this stores the set of line numbers currently allowed to render.
@@ -102,6 +103,10 @@ namespace DocumentHealth
                 _view.VisualElement.LayoutUpdated += OnVisualLayoutUpdated;
                 _dataProvider.DiagnosticsUpdated += OnDiagnosticsUpdated;
                 _formatMap.FormatMappingChanged += OnFormatMappingChanged;
+
+                // During solution restore, diagnostics can arrive shortly after the first empty refresh.
+                // Keep a short startup grace window so late Roslyn diagnostics can still be added.
+                _onSaveContinuousUntilUtc = DateTime.UtcNow.AddMilliseconds(InitialLoadContinuousGraceMilliseconds);
 
                 if (_textDocument != null)
                 {
