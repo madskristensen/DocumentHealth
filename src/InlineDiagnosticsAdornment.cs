@@ -236,6 +236,9 @@ namespace DocumentHealth
 
         private void OnDiagnosticsUpdated(object sender, EventArgs e)
         {
+            // Clear the suppress flag when diagnostics are updated
+            _suppressRenderUntilDiagnosticUpdate = false;
+
             if (_options.UpdateMode == UpdateMode.OnSave)
             {
                 IReadOnlyDictionary<int, LineDiagnostic> diagnosticsByLine = _dataProvider.DiagnosticsByLine;
@@ -324,6 +327,8 @@ namespace DocumentHealth
             return false;
         }
 
+        private volatile bool _suppressRenderUntilDiagnosticUpdate;
+
         private void OnTextBufferChanged(object sender, TextContentChangedEventArgs e)
         {
             if (_isDisposed || _dataProvider.DiagnosticsByLine.Count == 0)
@@ -348,8 +353,11 @@ namespace DocumentHealth
 
                 if (newlinesBefore != newlinesAfter)
                 {
-                    // Line count changed; clear adornments immediately
+                    // Line count changed; clear adornments immediately and suppress re-render
+                    // until diagnostics are updated to prevent blinking
                     _layer.RemoveAllAdornments();
+                    _inlineMessageAdornments.Clear();
+                    _suppressRenderUntilDiagnosticUpdate = true;
                     return;
                 }
             }
@@ -365,7 +373,7 @@ namespace DocumentHealth
 
         private void RenderAdornments()
         {
-            if (_isDisposed || _view.IsClosed || _view.InLayout)
+            if (_isDisposed || _view.IsClosed || _view.InLayout || _suppressRenderUntilDiagnosticUpdate)
             {
                 return;
             }

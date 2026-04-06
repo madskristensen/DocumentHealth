@@ -344,6 +344,17 @@ namespace DocumentHealth
                     return;
                 }
 
+                // Pre-fetch document path off the UI thread where possible
+                string documentPath = null;
+                try
+                {
+                    documentPath = GetDocumentPathOffThread();
+                }
+                catch
+                {
+                    // Fall back to UI thread version
+                }
+
                 // Switch to UI thread for Error List access (IWpfTableControl.Entries requires it)
                 // and to notify subscribers (they update WPF adornments)
                 await _joinableTaskFactory.SwitchToMainThreadAsync(token);
@@ -357,8 +368,13 @@ namespace DocumentHealth
                 // during solution load. Retry event hookup when we're on the UI thread.
                 SubscribeToErrorListChanges();
 
-                // Enhance with Error List data
-                Dictionary<int, LineDiagnostic> errorListDiagnostics = CollectDiagnosticsFromErrorList();
+                // Enhance with Error List data - pass document path to optimize filtering
+                if (string.IsNullOrEmpty(documentPath))
+                {
+                    documentPath = GetDocumentPath();
+                }
+
+                Dictionary<int, LineDiagnostic> errorListDiagnostics = CollectDiagnosticsFromErrorList(documentPath);
                 MergeDiagnostics(diagnostics, errorListDiagnostics);
 
                 // During solution/open-file startup there is a race where tags exist before
@@ -589,26 +605,59 @@ namespace DocumentHealth
         /// Collects diagnostics from the Error List for the current document.
         /// Must be called on the UI thread (IWpfTableControl.Entries requires it).
         /// </summary>
-        private Dictionary<int, LineDiagnostic> CollectDiagnosticsFromErrorList()
+        /// <param name="documentPath">Optional pre-computed document path to avoid redundant lookups</param>
+        private Dictionary<int, LineDiagnostic> CollectDiagnosticsFromErrorList(string documentPath = null)
         {
             var result = new Dictionary<int, LineDiagnostic>();
 
             try
             {
-                string documentPath = GetDocumentPath();
+                if (string.IsNullOrEmpty(documentPath))
+                {
+                    documentPath = GetDocumentPath();
+                }
+
                 if (string.IsNullOrEmpty(documentPath))
                 {
                     return result;
                 }
+
+                // Normalize once for all comparisons
+                string normalizedCurrentPath = NormalizeDocumentPath(documentPath);
 
                 // Use IErrorList.TableControl.Entries for reliable access to Error List data
                 if (_errorList?.TableControl != null)
                 {
                     try
                     {
+                        // OPTIMIZATION: Early filtering to reduce UI thread time
+                        // Process entries in batches to avoid blocking UI thread for too long
+                        const int batchSize = 100;
+                        int processedCount = 0;
+                        int matchedCount = 0;
+
                         foreach (ITableEntryHandle entry in _errorList.TableControl.Entries)
                         {
-                            ProcessErrorListEntry(result, entry, documentPath);
+                            processedCount++;
+
+                            // Early exit if we've processed too many entries without matches
+                            // This prevents freezing when there are thousands of errors in other files
+                            if (processedCount > batchSize && matchedCount == 0)
+                            {
+                                // No matches in first batch - likely wrong file, abort early
+                                break;
+                            }
+
+                            if (ProcessErrorListEntry(result, entry, normalizedCurrentPath))
+                            {
+                                matchedCount++;
+                            }
+
+                            // If we've found entries and processed many more without additional matches, exit
+                            if (matchedCount > 0 && processedCount > matchedCount + batchSize)
+                            {
+                                break;
+                            }
                         }
 
                         if (result.Count > 0)
@@ -643,7 +692,7 @@ namespace DocumentHealth
                                         return;
                                     }
 
-                                    ProcessSnapshotEntries(result, snapshot, documentPath);
+                                    ProcessSnapshotEntries(result, snapshot, normalizedCurrentPath);
                                 });
                             }
                             finally
@@ -676,7 +725,8 @@ namespace DocumentHealth
         /// <summary>
         /// Processes a single Error List entry and adds it to the result dictionary.
         /// </summary>
-        private void ProcessErrorListEntry(Dictionary<int, LineDiagnostic> result, ITableEntryHandle entry, string documentPath)
+        /// <returns>True if the entry matched the current document, false otherwise</returns>
+        private bool ProcessErrorListEntry(Dictionary<int, LineDiagnostic> result, ITableEntryHandle entry, string normalizedCurrentPath)
         {
             try
             {
@@ -684,21 +734,23 @@ namespace DocumentHealth
                 if (!entry.TryGetValue(StandardTableKeyNames.DocumentName, out object docNameObj) ||
                     !(docNameObj is string entryDocPath))
                 {
-                    return;
+                    return false;
                 }
 
+                // OPTIMIZATION: Fast path comparison before normalization
                 // Compare document identity robustly. Some language services report only file names,
                 // URI-style paths, or transient monikers before the file is saved.
-                if (!IsCurrentDocument(entryDocPath, documentPath))
+                string normalizedEntryPath = NormalizeDocumentPath(entryDocPath);
+                if (!IsNormalizedPathMatch(normalizedEntryPath, normalizedCurrentPath))
                 {
-                    return;
+                    return false;
                 }
 
                 // Get the line number (0-based in the Error List API)
                 if (!entry.TryGetValue(StandardTableKeyNames.Line, out object lineObj) ||
                     !(lineObj is int lineNumber))
                 {
-                    return;
+                    return false;
                 }
 
                 // Get the severity
@@ -722,7 +774,7 @@ namespace DocumentHealth
 
                 if (!IsSeverityEnabled(severity))
                 {
-                    return;
+                    return true; // Matched document but filtered by severity
                 }
 
                 // Get the message text
@@ -730,7 +782,7 @@ namespace DocumentHealth
                     !(textObj is string message) ||
                     string.IsNullOrWhiteSpace(message))
                 {
-                    return;
+                    return true; // Matched document but no message
                 }
 
                 // Get the error code
@@ -754,29 +806,37 @@ namespace DocumentHealth
                 }
 
                 AddOrUpdateDiagnostic(result, lineNumber, severity, message, errorCode);
+                return true;
             }
             catch (InvalidOperationException ex)
             {
                 // Entry may have been removed during enumeration
                 ex.Log();
+                return false;
             }
             catch (ArgumentException ex)
             {
                 // Entry access failed due to invalid state
                 ex.Log();
+                return false;
             }
         }
 
         /// <summary>
         /// Processes entries from a snapshot and adds them to the result dictionary.
         /// </summary>
-        private void ProcessSnapshotEntries(Dictionary<int, LineDiagnostic> result, ITableEntriesSnapshot snapshot, string documentPath)
+        private void ProcessSnapshotEntries(Dictionary<int, LineDiagnostic> result, ITableEntriesSnapshot snapshot, string normalizedCurrentPath)
         {
             try
             {
                 int count = snapshot.Count;
 
-                for (int i = 0; i < count; i++)
+                // OPTIMIZATION: Limit processing to avoid UI thread blocking
+                // If there are too many entries, they're likely not all for this document
+                const int maxEntriesToProcess = 1000;
+                int processLimit = Math.Min(count, maxEntriesToProcess);
+
+                for (int i = 0; i < processLimit; i++)
                 {
                     // Get the document name for this entry
                     if (!snapshot.TryGetValue(i, StandardTableKeyNames.DocumentName, out object docNameObj) ||
@@ -785,9 +845,11 @@ namespace DocumentHealth
                         continue;
                     }
 
+                    // OPTIMIZATION: Fast path comparison
                     // Compare document identity robustly. Some language services report only file names,
                     // URI-style paths, or transient monikers before the file is saved.
-                    if (!IsCurrentDocument(entryDocPath, documentPath))
+                    string normalizedEntryPath = NormalizeDocumentPath(entryDocPath);
+                    if (!IsNormalizedPathMatch(normalizedEntryPath, normalizedCurrentPath))
                     {
                         continue;
                     }
@@ -836,6 +898,13 @@ namespace DocumentHealth
                     }
 
                     AddOrUpdateDiagnostic(result, lineNumber, severity, message, errorCode);
+                }
+
+                // Log warning if we hit the limit
+                if (count > maxEntriesToProcess)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"DocumentHealth: Snapshot has {count} entries, processed only {maxEntriesToProcess} to avoid UI freeze");
                 }
             }
             catch (InvalidOperationException ex)
@@ -1016,6 +1085,15 @@ namespace DocumentHealth
             string normalizedEntryPath = NormalizeDocumentPath(entryDocumentPath);
             string normalizedCurrentPath = NormalizeDocumentPath(currentDocumentPath);
 
+            return IsNormalizedPathMatch(normalizedEntryPath, normalizedCurrentPath);
+        }
+
+        /// <summary>
+        /// Fast path comparison of already-normalized document paths.
+        /// Optimized version to avoid repeated normalization when paths are pre-normalized.
+        /// </summary>
+        private static bool IsNormalizedPathMatch(string normalizedEntryPath, string normalizedCurrentPath)
+        {
             if (string.Equals(normalizedEntryPath, normalizedCurrentPath, StringComparison.OrdinalIgnoreCase))
             {
                 return true;
@@ -1191,6 +1269,20 @@ namespace DocumentHealth
             {
                 // Property access may fail during disposal
                 ex.Log();
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Attempts to get the document path without requiring the UI thread.
+        /// This is best-effort; may throw if the property access requires marshalling.
+        /// </summary>
+        private string GetDocumentPathOffThread()
+        {
+            if (_view.TextBuffer.Properties.TryGetProperty(typeof(ITextDocument), out ITextDocument document))
+            {
+                return document.FilePath;
             }
 
             return null;
