@@ -8,6 +8,10 @@
   },
   "assetFiles": [
     {
+      "pathOnDisk": "art/glyphs-and-messages.png",
+      "targetPath": "art/glyphs-and-messages.png"
+    },
+    {
       "pathOnDisk": "art/tooltip.gif",
       "targetPath": "art/tooltip.gif"
     },
