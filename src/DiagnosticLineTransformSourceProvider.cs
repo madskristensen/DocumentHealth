@@ -8,6 +8,7 @@ using Microsoft.VisualStudio.Text.Formatting;
 using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Threading;
 using Microsoft.VisualStudio.Utilities;
+using ITextDocument = Microsoft.VisualStudio.Text.ITextDocument;
 
 namespace DocumentHealth
 {
@@ -32,6 +33,9 @@ namespace DocumentHealth
         [Import]
         internal IViewTagAggregatorFactoryService ViewTagAggregatorFactoryService = null;
 
+        [Import]
+        internal ITextDocumentFactoryService TextDocumentFactoryService = null;
+
         public ILineTransformSource Create(IWpfTextView textView)
         {
             if (textView.Roles.Contains(DifferenceViewerRoles.DiffTextViewRole))
@@ -42,6 +46,12 @@ namespace DocumentHealth
             General options = General.Instance;
 
             if (!options.ShowInlineMessages)
+            {
+                return null;
+            }
+
+            if (TextDocumentFactoryService.TryGetTextDocument(textView.TextBuffer, out ITextDocument textDocument)
+                && options.IsFileExtensionIgnored(textDocument.FilePath))
             {
                 return null;
             }

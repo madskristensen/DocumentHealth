@@ -8,6 +8,7 @@ using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Threading;
 using Microsoft.VisualStudio.Utilities;
+using ITextDocument = Microsoft.VisualStudio.Text.ITextDocument;
 
 namespace DocumentHealth
 {
@@ -28,6 +29,9 @@ namespace DocumentHealth
 
         [Import]
         internal IViewTagAggregatorFactoryService ViewTagAggregatorFactoryService = null;
+
+        [Import]
+        internal ITextDocumentFactoryService TextDocumentFactoryService = null;
 
         public ITagger<T> CreateTagger<T>(ITextView textView, ITextBuffer buffer) where T : ITag
         {
@@ -51,6 +55,12 @@ namespace DocumentHealth
             // Skip if the glyph margin is disabled (e.g., by another extension).
             // No point creating a tagger when nothing will consume the tags.
             if (!textView.Options.GetOptionValue(DefaultTextViewHostOptions.GlyphMarginId))
+            {
+                return null;
+            }
+
+            if (TextDocumentFactoryService.TryGetTextDocument(textView.TextBuffer, out ITextDocument textDocument)
+                && options.IsFileExtensionIgnored(textDocument.FilePath))
             {
                 return null;
             }

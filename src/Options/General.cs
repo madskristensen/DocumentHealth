@@ -1,4 +1,7 @@
+using System;
 using System.ComponentModel;
+using System.IO;
+using System.Linq;
 
 namespace DocumentHealth
 {
@@ -21,6 +24,12 @@ namespace DocumentHealth
         [Description("Disable Visual Studio's built-in file health indicator and use this extension's indicator instead.")]
         [DefaultValue(true)]
         public bool ReplaceBuiltInIndicator { get; set; } = true;
+
+        [Category("Inline Diagnostics")]
+        [DisplayName("Ignored file extensions")]
+        [Description("A comma-separated list of file extensions (e.g. .md, .txt) for which inline diagnostics will not be shown.")]
+        [DefaultValue(".md")]
+        public string IgnoredFileExtensions { get; set; } = ".md";
 
         [Category("Inline Diagnostics")]
         [DisplayName("Update mode")]
@@ -78,6 +87,33 @@ namespace DocumentHealth
 
         [Browsable(false)]
         public int RatingRequests { get; set; }
+
+        /// <summary>
+        /// Returns true if the given file path has an extension that should be ignored for inline diagnostics.
+        /// </summary>
+        public bool IsFileExtensionIgnored(string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath) || string.IsNullOrWhiteSpace(IgnoredFileExtensions))
+            {
+                return false;
+            }
+
+            string ext = Path.GetExtension(filePath);
+
+            if (string.IsNullOrEmpty(ext))
+            {
+                return false;
+            }
+
+            return IgnoredFileExtensions
+                .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(e => e.Trim())
+                .Where(e => e.Length > 0)
+                .Any(e => string.Equals(
+                    e.StartsWith(".") ? e : "." + e,
+                    ext,
+                    StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     public enum SeverityFilter

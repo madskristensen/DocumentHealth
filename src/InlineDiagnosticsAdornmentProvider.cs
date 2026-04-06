@@ -7,6 +7,7 @@ using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Threading;
 using Microsoft.VisualStudio.Utilities;
+using ITextDocument = Microsoft.VisualStudio.Text.ITextDocument;
 
 namespace DocumentHealth
 {
@@ -56,10 +57,15 @@ namespace DocumentHealth
                 return;
             }
 
+            TextDocumentFactoryService.TryGetTextDocument(textView.TextBuffer, out ITextDocument textDocument);
+
+            if (textDocument != null && options.IsFileExtensionIgnored(textDocument.FilePath))
+            {
+                return;
+            }
+
             DiagnosticDataProvider dataProvider = DiagnosticDataProvider.GetOrCreate(
                 textView, JoinableTaskContext.Factory, options, TableManagerProvider, ServiceProvider, ViewTagAggregatorFactoryService);
-
-            TextDocumentFactoryService.TryGetTextDocument(textView.TextBuffer, out ITextDocument textDocument);
 
             IEditorFormatMap formatMap = EditorFormatMapService.GetEditorFormatMap(textView);
 
