@@ -22,7 +22,7 @@ public class OptionsTests
         Assert.AreEqual(SeverityFilter.ErrorsAndWarnings, options.HighlightLines);
         Assert.AreEqual(MessagePosition.Inline, options.MessagePlacement);
         Assert.AreEqual("{message}", options.MessageTemplate);
-        Assert.AreEqual(".md", options.IgnoredFileExtensions);
+        Assert.AreEqual(".md, .txt", options.IgnoredFileExtensions);
     }
 
     [TestMethod]
