@@ -1,4 +1,3 @@
-using System;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
@@ -28,8 +27,8 @@ namespace DocumentHealth
         [Category("Inline Diagnostics")]
         [DisplayName("Ignored file extensions")]
         [Description("A comma-separated list of file extensions (e.g. .md, .txt) for which inline diagnostics will not be shown.")]
-        [DefaultValue(".md")]
-        public string IgnoredFileExtensions { get; set; } = ".md";
+        [DefaultValue(".md, .txt")]
+        public string IgnoredFileExtensions { get; set; } = ".md, .txt";
 
         [Category("Inline Diagnostics")]
         [DisplayName("Update mode")]
