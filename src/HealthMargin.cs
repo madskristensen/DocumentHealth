@@ -105,13 +105,15 @@ namespace DocumentHealth
 
                 _status.Update(errors, warnings, _options.ShowMessages ? messages : 0);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException ex)
             {
                 // Debounce cancelled, new update is coming
+                ex.Log();
             }
-            catch (ObjectDisposedException)
+            catch (ObjectDisposedException ex)
             {
                 // Margin or aggregator disposed while update was in flight
+                ex.Log();
             }
         }
 
@@ -163,14 +165,16 @@ namespace DocumentHealth
                     }
                 }
             }
-            catch (ObjectDisposedException)
+            catch (ObjectDisposedException ex)
             {
                 // View or aggregator may be disposed while tags are being enumerated
+                ex.Log();
             }
 
-            catch (InvalidOperationException)
+            catch (InvalidOperationException ex)
             {
                 // Snapshot may have changed during enumeration; counts will update on next change
+                ex.Log();
             }
 
             return (errors, warnings, messages);

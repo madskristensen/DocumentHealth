@@ -82,9 +82,10 @@ namespace DocumentHealth
                     {
                         errorList = serviceProvider.GetService(typeof(SVsErrorList)) as IErrorList;
                     }
-                    catch (InvalidOperationException)
+                    catch (InvalidOperationException ex)
                     {
                         // Service may not be available during shutdown or in certain contexts
+                        ex.Log();
                     }
 
                     return new DiagnosticDataProvider(textView, joinableTaskFactory, options, errorTableManager, errorList, viewTagAggregatorFactoryService);
@@ -175,30 +176,79 @@ namespace DocumentHealth
                 return;
             }
 
-            // Use a simple heuristic to detect likely tag removals without expensive enumeration.
-            // If we had errors before and the change spans are small relative to document size,
-            // assume tags may have been removed and update immediately for fast feedback.
-            bool immediate = false;
+            // Process incremental tag changes
+            UpdateForTagChanges(e);
 
-            if (_lastErrorTagCount > 0)
+            // Also schedule full update in case error list needs refresh
+            ScheduleUpdate();
+        }
+
+        private void UpdateForTagChanges(BatchedTagsChangedEventArgs e)
+        {
+            try
             {
-                // Check if this looks like a small edit (potential fix) rather than a large refresh
-                int changedSpanCount = 0;
-                foreach (IMappingSpan span in e.Spans)
+                ITextSnapshot snapshot = _view.TextSnapshot;
+                List<SnapshotSpan> changedLineSpans = new List<SnapshotSpan>();
+
+                foreach (IMappingSpan mappingSpan in e.Spans)
                 {
-                    changedSpanCount++;
-                    if (changedSpanCount > 5)
+                    NormalizedSnapshotSpanCollection spans = mappingSpan.GetSpans(snapshot);
+                    foreach (SnapshotSpan span in spans)
                     {
-                        // Large batch of changes - use debounce
-                        break;
+                        int startLine = snapshot.GetLineNumberFromPosition(span.Start.Position);
+                        int endLine = snapshot.GetLineNumberFromPosition(span.End.Position);
+
+                        for (int line = startLine; line <= endLine; line++)
+                        {
+                            ITextSnapshotLine snapshotLine = snapshot.GetLineFromLineNumber(line);
+                            changedLineSpans.Add(snapshotLine.ExtentIncludingLineBreak);
+                        }
                     }
                 }
 
-                // Small number of changed spans when we had errors suggests a fix was applied
-                immediate = changedSpanCount > 0 && changedSpanCount <= 5;
-            }
+                NormalizedSnapshotSpanCollection processSpans = new NormalizedSnapshotSpanCollection(changedLineSpans);
 
-            ScheduleUpdate(immediate);
+                // Clear diagnostics for affected lines
+                HashSet<int> affectedLines = new HashSet<int>();
+                foreach (SnapshotSpan span in processSpans)
+                {
+                    int startLine = snapshot.GetLineNumberFromPosition(span.Start.Position);
+                    int endLine = snapshot.GetLineNumberFromPosition(span.End.Position);
+                    for (int line = startLine; line <= endLine; line++)
+                    {
+                        affectedLines.Add(line);
+                    }
+                }
+
+                lock (_updateGate)
+                {
+                    foreach (int line in affectedLines)
+                    {
+                        _diagnosticsByLine.Remove(line);
+                    }
+                }
+
+                // Recollect for affected spans
+                Dictionary<int, LineDiagnostic> newDiags = CollectDiagnosticsFromErrorTags(processSpans);
+
+                // Merge into cache
+                lock (_updateGate)
+                {
+                    foreach (var kvp in newDiags)
+                    {
+                        _diagnosticsByLine[kvp.Key] = kvp.Value;
+                    }
+                }
+
+                // Update count
+                _lastErrorTagCount = _diagnosticsByLine.Values.Sum(d => d.Count);
+
+                DiagnosticsUpdated?.Invoke(this, EventArgs.Empty);
+            }
+            catch (Exception ex)
+            {
+                ex.Log();
+            }
         }
 
         private void OnTextBufferChanged(object sender, TextContentChangedEventArgs e)
@@ -415,7 +465,7 @@ namespace DocumentHealth
         /// Collects diagnostics from IErrorTag instances in the editor.
         /// This provides fast feedback as tags are generated immediately by the compiler/analyzer.
         /// </summary>
-        private Dictionary<int, LineDiagnostic> CollectDiagnosticsFromErrorTags()
+        private Dictionary<int, LineDiagnostic> CollectDiagnosticsFromErrorTags(NormalizedSnapshotSpanCollection processSpans = null)
         {
             var result = new Dictionary<int, LineDiagnostic>();
 
@@ -427,9 +477,9 @@ namespace DocumentHealth
             try
             {
                 ITextSnapshot snapshot = _view.TextSnapshot;
-                SnapshotSpan entireSpan = new SnapshotSpan(snapshot, 0, snapshot.Length);
+                NormalizedSnapshotSpanCollection spansToProcess = processSpans ?? new NormalizedSnapshotSpanCollection(new SnapshotSpan(snapshot, 0, snapshot.Length));
 
-                foreach (IMappingTagSpan<IErrorTag> tagSpan in _errorTagAggregator.GetTags(entireSpan))
+                foreach (IMappingTagSpan<IErrorTag> tagSpan in _errorTagAggregator.GetTags(spansToProcess))
                 {
                     try
                     {
@@ -521,13 +571,15 @@ namespace DocumentHealth
                     }
                 }
             }
-            catch (ObjectDisposedException)
+            catch (ObjectDisposedException ex)
             {
                 // Aggregator or view disposed
+                ex.Log();
             }
-            catch (InvalidOperationException)
+            catch (InvalidOperationException ex)
             {
                 // Collection modified during enumeration
+                ex.Log();
             }
 
             return result;
@@ -599,20 +651,23 @@ namespace DocumentHealth
                                 subscription?.Dispose();
                             }
                         }
-                        catch (ObjectDisposedException)
+                        catch (ObjectDisposedException ex)
                         {
                             // Source was disposed
+                            ex.Log();
                         }
                     }
                 }
             }
-            catch (ObjectDisposedException)
+            catch (ObjectDisposedException ex)
             {
                 // Table manager was disposed
+                ex.Log();
             }
-            catch (InvalidOperationException)
+            catch (InvalidOperationException ex)
             {
                 // Collection was modified during enumeration
+                ex.Log();
             }
 
             return result;
@@ -1127,13 +1182,15 @@ namespace DocumentHealth
                     return document.FilePath;
                 }
             }
-            catch (ObjectDisposedException)
+            catch (ObjectDisposedException ex)
             {
                 // View or buffer may be disposed
+                ex.Log();
             }
-            catch (InvalidOperationException)
+            catch (InvalidOperationException ex)
             {
                 // Property access may fail during disposal
+                ex.Log();
             }
 
             return null;

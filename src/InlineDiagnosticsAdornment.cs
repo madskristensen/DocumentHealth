@@ -55,6 +55,7 @@ namespace DocumentHealth
 
         private volatile bool _isDisposed;
         private readonly List<TextBlock> _inlineMessageAdornments = new List<TextBlock>();
+        private readonly List<TextBlock> _textBlockPool = new List<TextBlock>();
 
         // Cached visual tree references for visibility checking to avoid repeated tree walks
         private WeakReference<DependencyObject> _cachedLayerCanvas;
@@ -524,19 +525,19 @@ namespace DocumentHealth
 
             Brush foreground = GetForegroundBrush(diagnostic.Severity);
 
-            var textBlock = new TextBlock
-            {
-                Text = displayMessage,
-                Foreground = foreground,
-                FontSize = _view.FormattedLineSource.DefaultTextProperties.FontRenderingEmSize * 0.9,
-                FontFamily = _view.FormattedLineSource.DefaultTextProperties.Typeface.FontFamily,
-                FontStyle = GetFontStyle(diagnostic.Severity),
-                FontWeight = GetFontWeight(diagnostic.Severity),
-                IsHitTestVisible = true,
-                Tag = diagnostic,
-                Cursor = System.Windows.Input.Cursors.Arrow,
-                ToolTip = BuildDiagnosticToolTip(diagnostic),
-            };
+            TextBlock textBlock = _textBlockPool.Count > 0 ? _textBlockPool[_textBlockPool.Count - 1] : new TextBlock();
+            if (_textBlockPool.Count > 0) _textBlockPool.RemoveAt(_textBlockPool.Count - 1);
+
+            textBlock.Text = displayMessage;
+            textBlock.Foreground = foreground;
+            textBlock.FontSize = _view.FormattedLineSource.DefaultTextProperties.FontRenderingEmSize * 0.9;
+            textBlock.FontFamily = _view.FormattedLineSource.DefaultTextProperties.Typeface.FontFamily;
+            textBlock.FontStyle = GetFontStyle(diagnostic.Severity);
+            textBlock.FontWeight = GetFontWeight(diagnostic.Severity);
+            textBlock.IsHitTestVisible = true;
+            textBlock.Tag = diagnostic;
+            textBlock.Cursor = System.Windows.Input.Cursors.Arrow;
+            textBlock.ToolTip = BuildDiagnosticToolTip(diagnostic);
 
             ContextMenu contextMenu = null;
 
