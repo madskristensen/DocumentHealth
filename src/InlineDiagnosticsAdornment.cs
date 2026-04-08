@@ -5,6 +5,7 @@ using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.VisualStudio.PlatformUI;
 using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text;
@@ -74,6 +75,18 @@ namespace DocumentHealth
         // In OnSave mode, this stores the set of line numbers currently allowed to render.
         // New diagnostics are only added on save; resolved diagnostics are removed immediately.
         private readonly HashSet<int> _visibleLineNumbersOnSave = new HashSet<int>();
+
+        /// <summary>
+        /// Grace period after diagnostics are cleared to prevent blinking.
+        /// When diagnostics go from non-zero to zero (e.g., after an undo that resolves an
+        /// error), Roslyn may still briefly report stale diagnostics from error tags or the
+        /// error list before fully processing the change. This grace period suppresses
+        /// re-rendering until Roslyn has settled.
+        /// </summary>
+        private const int ReappearanceGraceMilliseconds = 1000;
+        private DateTime _reappearanceGraceUntilUtc = DateTime.MinValue;
+        private DispatcherTimer _reappearanceTimer;
+        private bool _hadDiagnostics;
 
         public InlineDiagnosticsAdornment(
             IWpfTextView view,
@@ -239,9 +252,34 @@ namespace DocumentHealth
             // Clear the suppress flag when diagnostics are updated
             _suppressRenderUntilDiagnosticUpdate = false;
 
+            IReadOnlyDictionary<int, LineDiagnostic> diagnosticsByLine = _dataProvider.DiagnosticsByLine;
+            bool hasDiagnostics = diagnosticsByLine.Count > 0;
+
+            // Track transitions from non-zero to zero diagnostics.
+            // When diagnostics are cleared after an edit/undo, Roslyn may still briefly
+            // report stale results from error tags or the error list. Start a grace period
+            // so that any stale re-appearance is suppressed until Roslyn settles.
+            if (_hadDiagnostics && !hasDiagnostics)
+            {
+                _reappearanceGraceUntilUtc = DateTime.UtcNow.AddMilliseconds(ReappearanceGraceMilliseconds);
+                StopReappearanceTimer();
+            }
+
+            _hadDiagnostics = hasDiagnostics;
+
+            // If diagnostics reappeared within the grace period, defer rendering.
+            // A timer will re-check after the grace period expires.
+            if (hasDiagnostics && IsWithinReappearanceGrace())
+            {
+                EnsureReappearanceTimer();
+                // Clear the adornment layer so nothing is visible during the grace period
+                _layer.RemoveAllAdornments();
+                _inlineMessageAdornments.Clear();
+                return;
+            }
+
             if (_options.UpdateMode == UpdateMode.OnSave)
             {
-                IReadOnlyDictionary<int, LineDiagnostic> diagnosticsByLine = _dataProvider.DiagnosticsByLine;
                 bool shouldRender;
 
                 if (_pendingSaveRender)
@@ -295,6 +333,53 @@ namespace DocumentHealth
                 return;
             }
 
+            RenderAdornments();
+        }
+
+        private bool IsWithinReappearanceGrace()
+        {
+            return DateTime.UtcNow < _reappearanceGraceUntilUtc;
+        }
+
+        /// <summary>
+        /// Starts a one-shot timer that fires after the reappearance grace period expires.
+        /// When it fires, if diagnostics are still present they will be rendered.
+        /// </summary>
+        private void EnsureReappearanceTimer()
+        {
+            if (_reappearanceTimer != null)
+            {
+                return;
+            }
+
+            _reappearanceTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(ReappearanceGraceMilliseconds),
+            };
+            _reappearanceTimer.Tick += OnReappearanceTimerTick;
+            _reappearanceTimer.Start();
+        }
+
+        private void StopReappearanceTimer()
+        {
+            if (_reappearanceTimer != null)
+            {
+                _reappearanceTimer.Stop();
+                _reappearanceTimer.Tick -= OnReappearanceTimerTick;
+                _reappearanceTimer = null;
+            }
+        }
+
+        private void OnReappearanceTimerTick(object sender, EventArgs e)
+        {
+            StopReappearanceTimer();
+
+            if (_isDisposed || _view.IsClosed)
+            {
+                return;
+            }
+
+            // Grace period has expired. If diagnostics are still present, they are real.
             RenderAdornments();
         }
 
@@ -374,6 +459,13 @@ namespace DocumentHealth
         private void RenderAdornments()
         {
             if (_isDisposed || _view.IsClosed || _view.InLayout || _suppressRenderUntilDiagnosticUpdate)
+            {
+                return;
+            }
+
+            // Don't render if we're within the reappearance grace period.
+            // Stale diagnostics may still be reported by error tags or the error list.
+            if (_dataProvider.DiagnosticsByLine.Count > 0 && IsWithinReappearanceGrace())
             {
                 return;
             }
@@ -1094,6 +1186,7 @@ namespace DocumentHealth
             if (!_isDisposed)
             {
                 _isDisposed = true;
+                StopReappearanceTimer();
                 _view.LayoutChanged -= OnLayoutChanged;
                 _view.Closed -= OnViewClosed;
                 _view.TextBuffer.Changed -= OnTextBufferChanged;

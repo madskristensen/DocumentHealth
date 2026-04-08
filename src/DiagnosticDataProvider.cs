@@ -188,7 +188,9 @@ namespace DocumentHealth
             try
             {
                 ITextSnapshot snapshot = _view.TextSnapshot;
-                List<SnapshotSpan> changedLineSpans = new List<SnapshotSpan>();
+
+                // Determine which lines are affected by the tag change
+                HashSet<int> affectedLines = new HashSet<int>();
 
                 foreach (IMappingSpan mappingSpan in e.Spans)
                 {
@@ -200,50 +202,35 @@ namespace DocumentHealth
 
                         for (int line = startLine; line <= endLine; line++)
                         {
-                            ITextSnapshotLine snapshotLine = snapshot.GetLineFromLineNumber(line);
-                            changedLineSpans.Add(snapshotLine.ExtentIncludingLineBreak);
+                            affectedLines.Add(line);
                         }
                     }
                 }
 
-                NormalizedSnapshotSpanCollection processSpans = new NormalizedSnapshotSpanCollection(changedLineSpans);
-
-                // Clear diagnostics for affected lines
-                HashSet<int> affectedLines = new HashSet<int>();
-                foreach (SnapshotSpan span in processSpans)
-                {
-                    int startLine = snapshot.GetLineNumberFromPosition(span.Start.Position);
-                    int endLine = snapshot.GetLineNumberFromPosition(span.End.Position);
-                    for (int line = startLine; line <= endLine; line++)
-                    {
-                        affectedLines.Add(line);
-                    }
-                }
-
+                // Only clear diagnostics for affected lines. Do not re-collect here
+                // because the tag aggregator may still return stale tags during the
+                // same event cycle (e.g., after an undo that resolves an error).
+                // The full ScheduleUpdate that follows in OnErrorTagsChanged will
+                // authoritatively re-add any diagnostics that are still valid.
+                bool changed = false;
                 lock (_updateGate)
                 {
                     foreach (int line in affectedLines)
                     {
-                        _diagnosticsByLine.Remove(line);
+                        if (_diagnosticsByLine.Remove(line))
+                        {
+                            changed = true;
+                        }
                     }
                 }
 
-                // Recollect for affected spans
-                Dictionary<int, LineDiagnostic> newDiags = CollectDiagnosticsFromErrorTags(processSpans);
-
-                // Merge into cache
-                lock (_updateGate)
+                if (changed)
                 {
-                    foreach (var kvp in newDiags)
-                    {
-                        _diagnosticsByLine[kvp.Key] = kvp.Value;
-                    }
+                    // Update count
+                    _lastErrorTagCount = _diagnosticsByLine.Values.Sum(d => d.Count);
+
+                    DiagnosticsUpdated?.Invoke(this, EventArgs.Empty);
                 }
-
-                // Update count
-                _lastErrorTagCount = _diagnosticsByLine.Values.Sum(d => d.Count);
-
-                DiagnosticsUpdated?.Invoke(this, EventArgs.Empty);
             }
             catch (Exception ex)
             {
