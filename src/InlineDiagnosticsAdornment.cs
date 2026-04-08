@@ -5,6 +5,7 @@ using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Microsoft.VisualStudio.PlatformUI;
 using Microsoft.VisualStudio.Shell.TableManager;
@@ -37,6 +38,11 @@ namespace DocumentHealth
         /// Background opacity applied to line highlight brushes.
         /// </summary>
         private const double BackgroundOpacity = 0.15;
+
+        /// <summary>
+        /// Duration for the fade-in animation applied to new adornments.
+        /// </summary>
+        private static readonly Duration FadeInDuration = new Duration(TimeSpan.FromMilliseconds(300));
 
         // Instance-level brushes loaded from Fonts & Colors settings.
         private Brush _errorBackground;
@@ -605,6 +611,7 @@ namespace DocumentHealth
                 Width = Math.Max(_view.ViewportWidth, viewLine.Width),
                 Height = highlightHeight,
                 IsHitTestVisible = false,
+                Opacity = 0,
             };
 
             Canvas.SetLeft(highlight, _view.ViewportLeft);
@@ -616,6 +623,9 @@ namespace DocumentHealth
                 tag: null,
                 adornment: highlight,
                 removedCallback: null);
+
+            highlight.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(0, 1, FadeInDuration));
         }
 
         private void RenderInlineMessage(ITextViewLine viewLine, LineDiagnostic diagnostic)
@@ -638,6 +648,7 @@ namespace DocumentHealth
             textBlock.Tag = diagnostic;
             textBlock.Cursor = System.Windows.Input.Cursors.Arrow;
             textBlock.ToolTip = BuildDiagnosticToolTip(diagnostic);
+            textBlock.Opacity = 0;
 
             ContextMenu contextMenu = null;
 
@@ -694,6 +705,9 @@ namespace DocumentHealth
                 tag: null,
                 adornment: textBlock,
                 removedCallback: null);
+
+            textBlock.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(0, 1, FadeInDuration));
 
             _inlineMessageAdornments.Add(textBlock);
         }
