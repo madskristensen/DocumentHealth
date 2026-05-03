@@ -105,10 +105,9 @@ namespace DocumentHealth
 
                 _status.Update(errors, warnings, _options.ShowMessages ? messages : 0);
             }
-            catch (OperationCanceledException ex)
+            catch (OperationCanceledException)
             {
                 // Debounce cancelled, new update is coming
-                ex.Log();
             }
             catch (ObjectDisposedException ex)
             {
