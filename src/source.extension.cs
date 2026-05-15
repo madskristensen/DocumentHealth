@@ -10,7 +10,7 @@ namespace DocumentHealth
     {
         public const string Id = "DocumentHealth.ebd2f3af-c274-4af6-bc9d-3e929361845d";
         public const string Name = "Document Health";
-        public const string Description = @"Shows an icon above the vertical scroll bar indicating if the document has any errors or warnings.";
+        public const string Description = @"Shows inline diagnostic messages and gutter glyphs, with inline/above/below placement and a scroll bar health icon.";
         public const string Language = "en-US";
         public const string Version = "1.1.901";
         public const string Author = "Mads Kristensen";

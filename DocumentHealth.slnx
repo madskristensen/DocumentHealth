@@ -8,6 +8,7 @@
   <Project Path="src/DocumentHealth.csproj" Id="1062ad26-c31e-45ee-8425-4e0fab8f5b07">
     <Platform Solution="*|arm64" Project="arm64" />
     <Platform Solution="*|x86" Project="x86" />
+    <Deploy Solution="Debug|Any CPU" />
   </Project>
   <Project Path="test/DocumentHealth.Test/DocumentHealth.Test.csproj" />
 </Solution>
