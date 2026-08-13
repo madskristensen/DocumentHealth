@@ -31,7 +31,6 @@ namespace DocumentHealth
         private readonly ITextView _view;
         private readonly JoinableTaskFactory _joinableTaskFactory;
         private readonly General _options;
-        private readonly ITableManager _errorTableManager;
         private readonly IErrorList _errorList;
         private readonly ITagAggregator<IErrorTag> _errorTagAggregator;
 
@@ -67,7 +66,6 @@ namespace DocumentHealth
             ITextView textView,
             JoinableTaskFactory joinableTaskFactory,
             General options,
-            ITableManagerProvider tableManagerProvider,
             SVsServiceProvider serviceProvider,
             IViewTagAggregatorFactoryService viewTagAggregatorFactoryService)
         {
@@ -75,8 +73,6 @@ namespace DocumentHealth
                 typeof(DiagnosticDataProvider),
                 () =>
                 {
-                    ITableManager errorTableManager = tableManagerProvider.GetTableManager(StandardTables.ErrorsTable);
-
                     IErrorList errorList = null;
                     try
                     {
@@ -88,7 +84,7 @@ namespace DocumentHealth
                         ex.Log();
                     }
 
-                    return new DiagnosticDataProvider(textView, joinableTaskFactory, options, errorTableManager, errorList, viewTagAggregatorFactoryService);
+                    return new DiagnosticDataProvider(textView, joinableTaskFactory, options, errorList, viewTagAggregatorFactoryService);
                 });
         }
 
@@ -96,14 +92,12 @@ namespace DocumentHealth
             ITextView view,
             JoinableTaskFactory joinableTaskFactory,
             General options,
-            ITableManager errorTableManager,
             IErrorList errorList,
             IViewTagAggregatorFactoryService viewTagAggregatorFactoryService)
         {
             _view = view;
             _joinableTaskFactory = joinableTaskFactory;
             _options = options;
-            _errorTableManager = errorTableManager;
             _errorList = errorList;
 
             // Create tag aggregator for fast error tag detection
@@ -657,47 +651,10 @@ namespace DocumentHealth
                         // May fail during update
                     }
                 }
-
-                // Fallback: iterate through sources using thread-safe snapshot APIs
-                if (_errorTableManager != null)
-                {
-                    foreach (ITableDataSource source in _errorTableManager.Sources)
-                    {
-                        try
-                        {
-                            var collector = new SnapshotFactoryCollector();
-                            IDisposable subscription = source.Subscribe(collector);
-
-                            try
-                            {
-                                collector.ForEach(factory =>
-                                {
-                                    ITableEntriesSnapshot snapshot = factory.GetCurrentSnapshot();
-
-                                    if (snapshot == null)
-                                    {
-                                        return;
-                                    }
-
-                                    ProcessSnapshotEntries(result, snapshot, normalizedCurrentPath);
-                                });
-                            }
-                            finally
-                            {
-                                subscription?.Dispose();
-                            }
-                        }
-                        catch (ObjectDisposedException ex)
-                        {
-                            // Source was disposed
-                            ex.Log();
-                        }
-                    }
-                }
             }
             catch (ObjectDisposedException ex)
             {
-                // Table manager was disposed
+                // Error List was disposed
                 ex.Log();
             }
             catch (InvalidOperationException ex)
@@ -810,103 +767,6 @@ namespace DocumentHealth
         }
 
         /// <summary>
-        /// Processes entries from a snapshot and adds them to the result dictionary.
-        /// </summary>
-        private void ProcessSnapshotEntries(Dictionary<int, LineDiagnostic> result, ITableEntriesSnapshot snapshot, string normalizedCurrentPath)
-        {
-            try
-            {
-                int count = snapshot.Count;
-
-                // OPTIMIZATION: Limit processing to avoid UI thread blocking
-                // If there are too many entries, they're likely not all for this document
-                const int maxEntriesToProcess = 1000;
-                int processLimit = Math.Min(count, maxEntriesToProcess);
-
-                for (int i = 0; i < processLimit; i++)
-                {
-                    // Get the document name for this entry
-                    if (!snapshot.TryGetValue(i, StandardTableKeyNames.DocumentName, out object docNameObj) ||
-                        !(docNameObj is string entryDocPath))
-                    {
-                        continue;
-                    }
-
-                    // OPTIMIZATION: Fast path comparison
-                    // Compare document identity robustly. Some language services report only file names,
-                    // URI-style paths, or transient monikers before the file is saved.
-                    string normalizedEntryPath = NormalizeDocumentPath(entryDocPath);
-                    if (!IsNormalizedPathMatch(normalizedEntryPath, normalizedCurrentPath))
-                    {
-                        continue;
-                    }
-
-                    // Get the line number (0-based in the Error List API)
-                    if (!snapshot.TryGetValue(i, StandardTableKeyNames.Line, out object lineObj) ||
-                        !(lineObj is int lineNumber))
-                    {
-                        continue;
-                    }
-
-                    // Get the severity
-                    DiagnosticSeverity severity = GetSeverityFromSnapshot(snapshot, i);
-
-                    if (!IsSeverityEnabled(severity))
-                    {
-                        continue;
-                    }
-
-                    // Get the message text
-                    if (!snapshot.TryGetValue(i, StandardTableKeyNames.Text, out object textObj) ||
-                        !(textObj is string message) ||
-                        string.IsNullOrWhiteSpace(message))
-                    {
-                        continue;
-                    }
-
-                    // Get the error code
-                    string errorCode = null;
-                    if (snapshot.TryGetValue(i, StandardTableKeyNames.ErrorCode, out object errorCodeObj) &&
-                        errorCodeObj is string code &&
-                        !string.IsNullOrWhiteSpace(code))
-                    {
-                        errorCode = code;
-                    }
-
-                    // Try to extract diagnostic code from the message if not in ErrorCode field
-                    string extractedCode = ExtractDiagnosticCode(message);
-                    if (!string.IsNullOrEmpty(extractedCode))
-                    {
-                        message = StripCodePrefix(message, extractedCode);
-                        if (string.IsNullOrEmpty(errorCode))
-                        {
-                            errorCode = extractedCode;
-                        }
-                    }
-
-                    AddOrUpdateDiagnostic(result, lineNumber, severity, message, errorCode);
-                }
-
-                // Log warning if we hit the limit
-                if (count > maxEntriesToProcess)
-                {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"DocumentHealth: Snapshot has {count} entries, processed only {maxEntriesToProcess} to avoid UI freeze");
-                }
-            }
-            catch (InvalidOperationException ex)
-            {
-                // Snapshot may have changed during enumeration
-                ex.Log();
-            }
-            catch (ArgumentOutOfRangeException ex)
-            {
-                // Index became invalid during enumeration
-                ex.Log();
-            }
-        }
-
-        /// <summary>
         /// Adds or updates a diagnostic entry in the result dictionary.
         /// </summary>
         private static void AddOrUpdateDiagnostic(Dictionary<int, LineDiagnostic> result, int lineNumber, DiagnosticSeverity severity, string message, string errorCode)
@@ -955,27 +815,6 @@ namespace DocumentHealth
                 case DiagnosticSeverity.Message: return _options.ShowSuggestions;
                 default: return true;
             }
-        }
-
-        private static DiagnosticSeverity GetSeverityFromSnapshot(ITableEntriesSnapshot snapshot, int index)
-        {
-            if (snapshot.TryGetValue(index, StandardTableKeyNames.ErrorSeverity, out object severityObj))
-            {
-                if (severityObj is __VSERRORCATEGORY category)
-                {
-                    switch (category)
-                    {
-                        case __VSERRORCATEGORY.EC_ERROR:
-                            return DiagnosticSeverity.Error;
-                        case __VSERRORCATEGORY.EC_WARNING:
-                            return DiagnosticSeverity.Warning;
-                        case __VSERRORCATEGORY.EC_MESSAGE:
-                            return DiagnosticSeverity.Message;
-                    }
-                }
-            }
-
-            return DiagnosticSeverity.Message;
         }
 
         /// <summary>
@@ -1339,87 +1178,5 @@ namespace DocumentHealth
         /// All individual diagnostic entries on this line, used for tooltip display.
         /// </summary>
         public List<DiagnosticEntry> Entries { get; } = new List<DiagnosticEntry>();
-    }
-
-    /// <summary>
-    /// A lightweight ITableDataSink implementation used to collect snapshot factories from an ITableDataSource.
-    /// This is thread-safe and designed for temporary subscription to gather current data.
-    /// </summary>
-    internal sealed class SnapshotFactoryCollector : ITableDataSink
-    {
-        private readonly List<ITableEntriesSnapshotFactory> _factories = new List<ITableEntriesSnapshotFactory>();
-        private readonly object _lock = new object();
-
-        /// <summary>
-        /// Gets the number of collected factories.
-        /// </summary>
-        public int Count
-        {
-            get
-            {
-                lock (_lock)
-                {
-                    return _factories.Count;
-                }
-            }
-        }
-
-        /// <summary>
-        /// Executes an action for each factory under the lock.
-        /// This avoids allocating a copy of the list.
-        /// </summary>
-        public void ForEach(Action<ITableEntriesSnapshotFactory> action)
-        {
-            lock (_lock)
-            {
-                foreach (ITableEntriesSnapshotFactory factory in _factories)
-                {
-                    action(factory);
-                }
-            }
-        }
-
-        public bool IsStable { get; set; } = true;
-
-        public void AddEntries(IReadOnlyList<ITableEntry> newEntries, bool removeAllEntries = false) { }
-
-        public void AddFactory(ITableEntriesSnapshotFactory newFactory, bool removeAllFactories = false)
-        {
-            if (newFactory == null) return;
-            lock (_lock)
-            {
-                if (removeAllFactories) _factories.Clear();
-                _factories.Add(newFactory);
-            }
-        }
-
-        public void AddSnapshot(ITableEntriesSnapshot newSnapshot, bool removeAllSnapshots = false) { }
-        public void FactorySnapshotChanged(ITableEntriesSnapshotFactory factory) { }
-        public void RemoveAllEntries() { }
-        public void RemoveAllFactories() { lock (_lock) { _factories.Clear(); } }
-        public void RemoveAllSnapshots() { }
-        public void RemoveEntries(IReadOnlyList<ITableEntry> oldEntries) { }
-
-        public void RemoveFactory(ITableEntriesSnapshotFactory oldFactory)
-        {
-            if (oldFactory == null) return;
-            lock (_lock) { _factories.Remove(oldFactory); }
-        }
-
-        public void RemoveSnapshot(ITableEntriesSnapshot oldSnapshot) { }
-        public void ReplaceEntries(IReadOnlyList<ITableEntry> oldEntries, IReadOnlyList<ITableEntry> newEntries) { }
-
-        public void ReplaceFactory(ITableEntriesSnapshotFactory oldFactory, ITableEntriesSnapshotFactory newFactory)
-        {
-            if (oldFactory == null || newFactory == null) return;
-            lock (_lock)
-            {
-                int index = _factories.IndexOf(oldFactory);
-                if (index >= 0) _factories[index] = newFactory;
-                else _factories.Add(newFactory);
-            }
-        }
-
-        public void ReplaceSnapshot(ITableEntriesSnapshot oldSnapshot, ITableEntriesSnapshot newSnapshot) { }
     }
 }

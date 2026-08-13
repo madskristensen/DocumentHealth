@@ -1,5 +1,4 @@
 using System.ComponentModel.Composition;
-using Microsoft.VisualStudio.Shell.TableManager;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Classification;
 using Microsoft.VisualStudio.Text.Differencing;
@@ -27,9 +26,6 @@ namespace DocumentHealth
 
         [Import]
         internal JoinableTaskContext JoinableTaskContext = null;
-
-        [Import]
-        internal ITableManagerProvider TableManagerProvider = null;
 
         [Import]
         internal SVsServiceProvider ServiceProvider = null;
@@ -65,7 +61,7 @@ namespace DocumentHealth
             }
 
             DiagnosticDataProvider dataProvider = DiagnosticDataProvider.GetOrCreate(
-                textView, JoinableTaskContext.Factory, options, TableManagerProvider, ServiceProvider, ViewTagAggregatorFactoryService);
+                textView, JoinableTaskContext.Factory, options, ServiceProvider, ViewTagAggregatorFactoryService);
 
             IEditorFormatMap formatMap = EditorFormatMapService.GetEditorFormatMap(textView);
 
